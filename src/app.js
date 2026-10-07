@@ -1,15 +1,16 @@
-import { DEFAULTS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261007-connect4';
-import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261007-connect4';
-import { VideoPlayer } from './youtube.js?v=20261007-connect4';
-import { GOOGLE_CLIENT_ID } from './deployment-config.js?v=20261007-connect4';
+import { DEFAULTS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261007-fill5';
+import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261007-fill5';
+import { VideoPlayer } from './youtube.js?v=20261007-fill5';
+import { GOOGLE_CLIENT_ID } from './deployment-config.js?v=20261007-fill5';
 
 const $ = id => document.getElementById(id);
 const STORAGE = 'photo-memory-viewer.settings.v1';
-let settings = { ...DEFAULTS, clientId: GOOGLE_CLIENT_ID };
+let settings = { ...DEFAULTS, clientId: GOOGLE_CLIENT_ID, photoFitVersion: 1 };
 try {
   const saved = JSON.parse(localStorage.getItem(STORAGE) || '{}');
-  settings = validateSettings({ ...DEFAULTS, ...saved, clientId: saved.clientId || GOOGLE_CLIENT_ID });
-} catch { settings = { ...DEFAULTS, clientId: GOOGLE_CLIENT_ID }; }
+  // Apply the new fill mode once to existing installations; later choices remain saved.
+  settings = validateSettings({ ...DEFAULTS, ...saved, fit: saved.photoFitVersion === 1 ? (saved.fit || DEFAULTS.fit) : 'cover', clientId: saved.clientId || GOOGLE_CLIENT_ID, photoFitVersion: 1 });
+} catch { settings = { ...DEFAULTS, clientId: GOOGLE_CLIENT_ID, photoFitVersion: 1 }; }
 let draftLayout = settings.layout;
 let source = null, directory = null, importedFiles = null;
 let importedFileFolder = null, pendingFileFolder = null;
@@ -444,7 +445,7 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pagehide', () => { stop(); scanController?.abort(); });
 new ResizeObserver(resizeGrid).observe($('viewer'));
-populate(); showPlayback(); resizeGrid();
+populate(); persist(); showPlayback(); resizeGrid();
 if (preferFiles) {
   $('folder-button-label').textContent = 'Google Driveの親フォルダを選択';
   $('local-picker-hint').textContent = 'iPad・iPhoneでアルバム全体を読む場合はGoogle Drive接続を使います。「B.01 じいじの思い出アルバム」を選ぶと配下の日付付きフォルダをまとめて読み込みます。下の写真選択は1フォルダだけの補助機能です。';

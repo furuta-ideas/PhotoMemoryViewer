@@ -1,4 +1,4 @@
-export const DEFAULTS = Object.freeze({ start: '', end: '', layout: 4, refresh: 15, effect: 'smooth', fit: 'contain', youtube: true, sound: true, volume: 70, bgm: 'off', bgmVolume: 40, sourceTab: 'local', driveFolder: '', clientId: '', localFileFolder: '' });
+export const DEFAULTS = Object.freeze({ start: '', end: '', layout: 4, refresh: 15, effect: 'smooth', fit: 'cover', youtube: true, sound: true, volume: 70, bgm: 'off', bgmVolume: 40, sourceTab: 'local', driveFolder: '', clientId: '', localFileFolder: '' });
 
 export function prefersFileSelection(userAgent, platform, touchPoints) {
   return /iPad|iPhone|iPod/i.test(userAgent) || (platform === 'MacIntel' && touchPoints > 1);
