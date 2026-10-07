@@ -37,3 +37,11 @@ SafariでHTTPS配信されたアプリを開きます。PCで動かしているl
 - [Google Identity Services token model](https://developers.google.com/identity/oauth2/web/guides/use-token-model)
 - [Drive API files.list](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list)
 - [Drive API OAuth scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)
+
+## アルバムの親フォルダを選択する
+
+「B.01 じいじの思い出アルバム」の下に「20050330 春の家族のお出かけ」などの日付付きフォルダ、その下に写真がある構成に対応します。
+
+Google Driveタブで親フォルダ名を入力し、「Googleに接続して親フォルダを探す」を押します。結果の親フォルダを選ぶと配下を再帰的に読み込み、各写真の日付・表示名は所属する日付付きフォルダから取得します。親フォルダに日付は不要です。名前の先頭部分でも検索できます。同名の候補はフォルダIDで区別できます。初回のOAuth設定は必要です。
+
+iPadの「ファイル」アプリ内にあるDriveからのフォルダ選択と、このGoogle Drive接続は別の方法です。通常の写真ファイル選択からは親フォルダの階層を取得できないため、アルバム全体にはGoogle Drive接続を使います。Windowsでは「この端末」から親フォルダを選択する方法にも対応します。

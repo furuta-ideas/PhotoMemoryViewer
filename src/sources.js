@@ -1,4 +1,4 @@
-import { datedFolder, nearestFolder, youtubeLinks, driveFolderId } from './core.js?v=20261007-caption2';
+import { datedFolder, nearestFolder, youtubeLinks, driveFolderId } from './core.js?v=20261007-album3';
 const IMAGE = /\.(jpe?g|png|webp|gif)$/i;
 const LINK = /\.(txt|url)$/i;
 const SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
@@ -122,6 +122,18 @@ export class DriveSource {
       if (response.status === 404) throw new Error('フォルダまたはファイルが見つかりません。');
       throw Object.assign(new Error('Google Driveの読み込みに失敗しました。しばらくして再試行してください。'), { code: 'NETWORK' });
     }
+  }
+  async findFolders(name, signal) {
+    const escaped = name.trim().replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    if (!escaped) throw new Error('親フォルダの名前を入力してください。');
+    const folders = []; let pageToken = '';
+    do {
+      const params = { q: `trashed = false and mimeType = 'application/vnd.google-apps.folder' and name contains '${escaped}'`, fields: 'nextPageToken,files(id,name)', pageSize: '1000', orderBy: 'name' };
+      if (pageToken) params.pageToken = pageToken;
+      const page = await this.request('files', params, signal);
+      folders.push(...(page.files || [])); pageToken = page.nextPageToken;
+    } while (pageToken);
+    return folders;
   }
   async scan(value, onProgress = () => {}, signal) {
     const id = driveFolderId(value);

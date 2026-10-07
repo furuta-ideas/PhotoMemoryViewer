@@ -1,6 +1,6 @@
-import { DEFAULTS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261007-caption2';
-import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261007-caption2';
-import { VideoPlayer } from './youtube.js?v=20261007-caption2';
+import { DEFAULTS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261007-album3';
+import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261007-album3';
+import { VideoPlayer } from './youtube.js?v=20261007-album3';
 
 const $ = id => document.getElementById(id);
 const STORAGE = 'photo-memory-viewer.settings.v1';
@@ -81,7 +81,7 @@ function hasVideoRoom() {
 }
 function setBusy(value) {
   busy = value;
-  for (const id of ['choose-folder', 'choose-files', 'connect-drive', 'reload-source', 'disconnect', 'demo', 'empty-choose', 'apply']) $(id).disabled = value || (['reload-source', 'disconnect'].includes(id) && !source);
+  for (const id of ['choose-folder', 'choose-files', 'find-drive-folder', 'connect-drive', 'reload-source', 'disconnect', 'demo', 'empty-choose', 'apply']) $(id).disabled = value || (['reload-source', 'disconnect'].includes(id) && !source);
   $('play').disabled = value || !(photos.length || videos.length);
 }
 function progress(count) { $('source-name').textContent = `読み込み中… ${count}件確認`; }
@@ -110,7 +110,7 @@ async function importSource(loader, kind, name) {
 }
 async function pickFolder() {
   if (busy) return;
-  if (preferFiles) { pickFiles(); return; }
+  if (preferFiles) { chooseTab('drive'); $('drive-search-name').focus(); toast('Google Driveでアルバムの親フォルダを選びます。「Googleに接続して親フォルダを探す」を押してください。'); return; }
   if ('showDirectoryPicker' in window) {
     try {
       const handle = await window.showDirectoryPicker({ mode: 'read' });
@@ -344,6 +344,39 @@ async function prepareDrive() {
   $('connect-drive').textContent = 'Googleに接続して読み込む ↗';
 }
 $('client-id').addEventListener('change', () => { preparedClient = ''; prepareDrive().catch(error => toast(error.message)); });
+$('find-drive-folder').addEventListener('click', async () => {
+  if (busy) return;
+  const results = $('drive-folder-results');
+  try {
+    if (!$('client-id').value.trim()) {
+      $('drive-setup').open = true; $('client-id').focus();
+      toast('初回はGoogle接続のクライアントIDを設定してください。設定手順は「Google接続の初期設定」にあります。'); return;
+    }
+    if (preparedClient !== $('client-id').value.trim() || !drive.client) {
+      await prepareDrive(); toast('接続の準備ができました。もう一度「親フォルダを探す」を押してください。'); return;
+    }
+    const authorization = drive.token && Date.now() < drive.expires ? Promise.resolve() : drive.authorize();
+    setBusy(true); results.hidden = true; results.replaceChildren();
+    await authorization;
+    const folders = await drive.findFolders($('drive-search-name').value);
+    for (const folder of folders) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'folder-button';
+      button.textContent = `${folder.name} を選択`; button.title = `フォルダID：${folder.id}`;
+      button.addEventListener('click', async () => {
+        if (busy) return;
+        $('drive-folder').value = folder.id;
+        await importSource(signal => drive.scan(folder.id, progress, signal), 'drive', folder.name);
+        if (sourceKind === 'drive' && sourceName === folder.name) {
+          settings.driveFolder = folder.id; settings.clientId = $('client-id').value.trim(); persist(); results.hidden = true;
+        }
+      });
+      results.append(button);
+    }
+    if (!folders.length) { const message = document.createElement('p'); message.className = 'hint'; message.textContent = '該当するフォルダがありません。名前の先頭部分（例：B.01）で検索してください。'; results.append(message); }
+    results.hidden = false;
+  } catch (error) { $('drive-setup').open = true; toast(error.message); }
+  finally { setBusy(false); }
+});
 $('connect-drive').addEventListener('click', async () => {
   if (busy) return;
   try {
@@ -400,9 +433,8 @@ window.addEventListener('pagehide', () => { stop(); scanController?.abort(); });
 new ResizeObserver(resizeGrid).observe($('viewer'));
 populate(); showPlayback(); resizeGrid();
 if (preferFiles) {
-  $('file-selection').open = true;
-  $('folder-button-label').textContent = '写真ファイルを選択';
-  $('local-picker-hint').textContent = 'iPad・iPhoneでは、下に日付付きフォルダ名を入力し、そのフォルダ内の写真を選択してください。フォルダ全体の自動読み込みにはGoogle Drive接続を使います。';
+  $('folder-button-label').textContent = 'Google Driveの親フォルダを選択';
+  $('local-picker-hint').textContent = 'iPad・iPhoneでアルバム全体を読む場合はGoogle Drive接続を使います。「B.01 じいじの思い出アルバム」を選ぶと配下の日付付きフォルダをまとめて読み込みます。下の写真選択は1フォルダだけの補助機能です。';
 }
 if (settings.clientId) prepareDrive().catch(() => {});
 restoreHandle().then(handle => {

@@ -58,3 +58,15 @@ test('Drive refuses expired tokens and marks HTTP401 for reconnect', async conte
   context.mock.method(globalThis, 'fetch', async () => Response.json({}, { status: 401 }));
   await assert.rejects(source.request('files'), error => error.code === 'AUTH');
 });
+
+test('Drive folder name search escapes query syntax and follows pagination', async context => {
+  const source = new DriveSource(); const queries=[];
+  context.mock.method(source,'request',async (path,params)=>{
+    queries.push(params);
+    return params.pageToken ? {files:[{id:'second',name:'B.01 second'}]} : {files:[{id:'first',name:'B.01 album'}],nextPageToken:'next'};
+  });
+  const result=await source.findFolders("B.01 someone's album");
+  assert.equal(result.length,2); assert.equal(queries[1].pageToken,'next');
+  assert.ok(queries[0].q.includes("someone\\'s"));
+  await assert.rejects(source.findFolders('  '));
+});

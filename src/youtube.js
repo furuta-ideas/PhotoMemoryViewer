@@ -1,4 +1,4 @@
-import { randomSeek } from './core.js?v=20261007-caption2';
+import { randomSeek } from './core.js?v=20261007-album3';
 let apiPromise;
 function youtubeAPI() {
   if (window.YT?.Player) return Promise.resolve(window.YT);

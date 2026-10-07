@@ -9,3 +9,5 @@
 .folder-caption{position:absolute;bottom:45px;left:0;right:0;z-index:5;margin:0;padding:28px 16px 14px;text-align:center;font-family:"Yu Gothic","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;font-weight:800;font-size:clamp(14px,1.6vw,24px);line-height:1.5;color:#fff;background:linear-gradient(transparent,#000a);text-shadow:0 2px 4px #000,1px 0 2px #000,-1px 0 2px #000;pointer-events:none;overflow-wrap:anywhere}.immersive .folder-caption{bottom:0;padding-bottom:calc(14px + env(safe-area-inset-bottom))}
 
 .video-tile iframe,.video-host{top:0;height:100%}
+
+#drive-folder-results{display:grid;gap:8px;margin-top:12px}#find-drive-folder{margin-top:10px}
