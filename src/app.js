@@ -1,11 +1,15 @@
-import { DEFAULTS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261007-album3';
-import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261007-album3';
-import { VideoPlayer } from './youtube.js?v=20261007-album3';
+import { DEFAULTS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261007-connect4';
+import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261007-connect4';
+import { VideoPlayer } from './youtube.js?v=20261007-connect4';
+import { GOOGLE_CLIENT_ID } from './deployment-config.js?v=20261007-connect4';
 
 const $ = id => document.getElementById(id);
 const STORAGE = 'photo-memory-viewer.settings.v1';
-let settings = { ...DEFAULTS };
-try { settings = validateSettings({ ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORAGE) || '{}') }); } catch { settings = { ...DEFAULTS }; }
+let settings = { ...DEFAULTS, clientId: GOOGLE_CLIENT_ID };
+try {
+  const saved = JSON.parse(localStorage.getItem(STORAGE) || '{}');
+  settings = validateSettings({ ...DEFAULTS, ...saved, clientId: saved.clientId || GOOGLE_CLIENT_ID });
+} catch { settings = { ...DEFAULTS, clientId: GOOGLE_CLIENT_ID }; }
 let draftLayout = settings.layout;
 let source = null, directory = null, importedFiles = null;
 let importedFileFolder = null, pendingFileFolder = null;
@@ -343,6 +347,11 @@ async function prepareDrive() {
   await drive.prepare(clientId); preparedClient = clientId;
   $('connect-drive').textContent = 'Googleに接続して読み込む ↗';
 }
+function driveStatus(message, error = false) {
+  $('drive-status').textContent = message;
+  $('drive-status').classList.toggle('form-error', error);
+  $('drive-status').hidden = false;
+}
 $('client-id').addEventListener('change', () => { preparedClient = ''; prepareDrive().catch(error => toast(error.message)); });
 $('find-drive-folder').addEventListener('click', async () => {
   if (busy) return;
@@ -350,13 +359,15 @@ $('find-drive-folder').addEventListener('click', async () => {
   try {
     if (!$('client-id').value.trim()) {
       $('drive-setup').open = true; $('client-id').focus();
-      toast('初回はGoogle接続のクライアントIDを設定してください。設定手順は「Google接続の初期設定」にあります。'); return;
+      driveStatus('Google接続の初期設定がまだ完了していないため、検索を実行できません。アプリ管理者が接続設定を準備しています。', true); return;
     }
     if (preparedClient !== $('client-id').value.trim() || !drive.client) {
-      await prepareDrive(); toast('接続の準備ができました。もう一度「親フォルダを探す」を押してください。'); return;
+      driveStatus('Google接続を準備しています…');
+      await prepareDrive(); driveStatus('Google接続の準備ができました。もう一度「親フォルダを探す」を押してGoogleの認証画面を開いてください。'); return;
     }
     const authorization = drive.token && Date.now() < drive.expires ? Promise.resolve() : drive.authorize();
     setBusy(true); results.hidden = true; results.replaceChildren();
+    driveStatus('Googleへの接続・フォルダ検索を実行しています…');
     await authorization;
     const folders = await drive.findFolders($('drive-search-name').value);
     for (const folder of folders) {
@@ -374,7 +385,9 @@ $('find-drive-folder').addEventListener('click', async () => {
     }
     if (!folders.length) { const message = document.createElement('p'); message.className = 'hint'; message.textContent = '該当するフォルダがありません。名前の先頭部分（例：B.01）で検索してください。'; results.append(message); }
     results.hidden = false;
-  } catch (error) { $('drive-setup').open = true; toast(error.message); }
+    driveStatus(folders.length ? `${folders.length}件の親フォルダが見つかりました。下から選択してください。` : 'フォルダが見つかりません。名前の先頭部分（B.01など）で再検索してください。');
+    settings.clientId = $('client-id').value.trim(); persist();
+  } catch (error) { $('drive-setup').open = true; driveStatus(error.message, true); toast(error.message); }
   finally { setBusy(false); }
 });
 $('connect-drive').addEventListener('click', async () => {
@@ -436,7 +449,8 @@ if (preferFiles) {
   $('folder-button-label').textContent = 'Google Driveの親フォルダを選択';
   $('local-picker-hint').textContent = 'iPad・iPhoneでアルバム全体を読む場合はGoogle Drive接続を使います。「B.01 じいじの思い出アルバム」を選ぶと配下の日付付きフォルダをまとめて読み込みます。下の写真選択は1フォルダだけの補助機能です。';
 }
-if (settings.clientId) prepareDrive().catch(() => {});
+if (settings.clientId) prepareDrive().catch(error => driveStatus(error.message, true));
+else driveStatus('Google接続の初期設定が未完了です。検索を利用するには、アプリ管理者による接続設定が必要です。', true);
 restoreHandle().then(handle => {
   if (!source && !busy && handle) {
     directory = handle;

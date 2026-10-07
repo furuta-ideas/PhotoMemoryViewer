@@ -185,6 +185,8 @@ let browser;
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
   });
   await page.click('#stop'); await page.click('[data-source="drive"]');
+  await page.click('#find-drive-folder');
+  assert.match(await page.locator('#drive-status').innerText(), /検索を実行できません/);
   await page.fill('#drive-folder', 'https://drive.google.com/drive/folders/abcdefghijklmnop');
   await page.locator('#drive-setup').evaluate(el => el.open = true);
   await page.fill('#client-id', 'mock-client.apps.googleusercontent.com'); await page.locator('#client-id').dispatchEvent('change');
