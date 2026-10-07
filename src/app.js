@@ -1,6 +1,6 @@
-import { DEFAULTS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261007-ipad1';
-import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261007-ipad1';
-import { VideoPlayer } from './youtube.js?v=20261007-ipad1';
+import { DEFAULTS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261007-caption2';
+import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261007-caption2';
+import { VideoPlayer } from './youtube.js?v=20261007-caption2';
 
 const $ = id => document.getElementById(id);
 const STORAGE = 'photo-memory-viewer.settings.v1';
@@ -132,14 +132,20 @@ function pickFiles() {
 function destroyTiles() {
   epoch++; video?.destroy(); video = null;
   for (const tile of tiles) { tile.controller?.abort(); tile.urls.forEach(url => URL.revokeObjectURL(url)); tile.urls.clear(); }
-  tiles = []; $('memory-grid').replaceChildren();
+  tiles = []; $('memory-grid').replaceChildren(); updateFolderCaption();
 }
 function makeTile(isVideo = false) {
   const element = document.createElement('div'); element.className = `memory-tile${isVideo ? ' video-tile' : ''}`;
-  const caption = document.createElement('p'); caption.className = 'caption';
+  const caption = document.createElement('p'); caption.className = 'caption'; caption.hidden = true;
   const label = document.createElement('span'); caption.append(label); element.append(caption);
   const tile = { element, label, item: null, pending: null, urls: new Set(), busy: false, isVideo, controller: null, revision: 0 };
   $('memory-grid').append(element); tiles.push(tile); return tile;
+}
+function updateFolderCaption() {
+  const items = tiles.map(tile => tile.item).filter(Boolean);
+  const shared = items.length > 0 && new Set(items.map(item => item.folder)).size === 1;
+  $('folder-caption').textContent = shared ? items[0].folder : '';
+  $('folder-caption').hidden = !shared;
 }
 function exclusions(tile) { return new Set([...tiles.filter(t => t !== tile).flatMap(t => [t.item?.id, t.pending?.id]), tile.item?.id, ...badPhotos].filter(Boolean)); }
 async function replacePhoto(tile, generation = epoch) {
@@ -176,7 +182,7 @@ async function replacePhoto(tile, generation = epoch) {
         tile.element.classList.remove('smooth', 'fade', 'slide', 'none'); tile.element.classList.add(settings.effect);
         tile.element.style.setProperty('--duration', `${duration}s`); tile.element.style.setProperty('--fit', settings.fit);
         image.classList.add('entering'); tile.element.insertBefore(image, tile.element.querySelector('.caption')); tile.element.querySelector('.tile-error')?.remove();
-        tile.item = item; tile.label.textContent = item.folder; old?.classList.add('leaving');
+        tile.item = item; tile.label.textContent = item.folder; updateFolderCaption(); old?.classList.add('leaving');
         // Force the initial opacity to commit before starting the transition.
         image.getBoundingClientRect(); image.classList.remove('entering');
         if (old) {
@@ -198,7 +204,7 @@ async function replacePhoto(tile, generation = epoch) {
   }
 }
 async function mountVideo(tile, generation, item) {
-  currentVideo = item; tile.item = item; tile.label.textContent = item.folder;
+  currentVideo = item; tile.item = item; tile.label.textContent = item.folder; updateFolderCaption();
   const host = document.createElement('div'); host.className = 'video-host'; tile.element.prepend(host);
   const resume = document.createElement('button'); resume.className = 'video-resume'; resume.textContent = 'タップして動画を再生'; resume.hidden = true; tile.element.append(resume);
   const player = new VideoPlayer({
@@ -224,7 +230,7 @@ async function changeVideo(failure = false) {
   tile.element.querySelectorAll('iframe,.video-host,.video-resume').forEach(element => element.remove());
   if (available.length) await mountVideo(tile, epoch, available[Math.floor(Math.random() * available.length)]);
   else {
-    tile.isVideo = false; tile.element.classList.remove('video-tile'); tile.item = null; tile.label.textContent = ''; currentVideo = null;
+    tile.isVideo = false; tile.element.classList.remove('video-tile'); tile.item = null; tile.label.textContent = ''; currentVideo = null; updateFolderCaption();
     $('next-video').hidden = true; syncBGM();
     if (photos.length) await replacePhoto(tile);
     else { stop(); toast('再生できる動画がありません。別のフォルダを選択してください。'); const text = document.createElement('div'); text.className = 'tile-error'; text.textContent = 'この動画は再生できません'; tile.element.append(text); }

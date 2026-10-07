@@ -45,6 +45,9 @@ let browser;
   await page.waitForTimeout(500);
   assert.equal(await page.locator('#viewer-count').innerText(), '1 PHOTOS / 0 VIDEOS');
   assert.equal((await page.locator('.caption').allTextContents()).every(text => text === '20240403 （春の山歩き）'), true);
+  assert.equal(await page.locator('#folder-caption').innerText(), '20240403 （春の山歩き）');
+  assert.equal(await page.locator('#folder-caption').isVisible(), true);
+  assert.match(await page.locator('#app-updated').innerText(), /2026年10月7日/);
   await page.fill('#start-date', '20240404'); await page.click('#apply');
   assert.equal(await page.locator('#form-error').isVisible(), true);
   await page.fill('#start-date', '20300101'); await page.fill('#end-date', '20301231'); await page.click('#apply');
@@ -217,7 +220,7 @@ let browser;
   assert.equal(await ipad.locator('#source-name').innerText(), '20250815 （夏休み）');
   await ipad.click('#reload-source');
   await ipad.waitForFunction(() => !document.getElementById('apply').disabled);
-  assert.equal(await ipad.locator('.caption span').first().innerText(), '20250815 （夏休み）');
+  assert.equal(await ipad.locator('#folder-caption').innerText(), '20250815 （夏休み）');
   await ipad.screenshot({ path:path.join(output, 'PhotoMemoryViewer-ipad-files.png') });
   console.log('PASS iPad desktop-agent detection, regular multi-file picker, explicit folder metadata and reload (simulated device)');
 
