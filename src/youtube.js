@@ -1,4 +1,4 @@
-import { randomSeek } from './core.js';
+import { randomSeek } from './core.js?v=20261007-ipad1';
 let apiPromise;
 function youtubeAPI() {
   if (window.YT?.Player) return Promise.resolve(window.YT);

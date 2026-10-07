@@ -1,6 +1,6 @@
-import { DEFAULTS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js';
-import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js';
-import { VideoPlayer } from './youtube.js';
+import { DEFAULTS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261007-ipad1';
+import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261007-ipad1';
+import { VideoPlayer } from './youtube.js?v=20261007-ipad1';
 
 const $ = id => document.getElementById(id);
 const STORAGE = 'photo-memory-viewer.settings.v1';
