@@ -37,7 +37,9 @@
       <form id="settings-form">
         <section class="setting-section"><h3><span>01</span> 写真の場所</h3>
           <div class="source-tabs" role="group" aria-label="写真の接続方法"><button type="button" class="active" data-source="local">この端末</button><button type="button" data-source="drive">Google Drive</button></div>
-          <div id="local-fields"><button type="button" id="choose-folder" class="folder-button"><svg><use href="#i-folder"/></svg><span>写真フォルダを選択</span><span class="arrow">↗</span></button><p class="hint">日付付きフォルダが入った親フォルダを選択。<br>iPad・iPhoneではGoogle Driveがおすすめです。</p><input id="folder-input" type="file" webkitdirectory multiple hidden></div>
+          <div id="local-fields"><button type="button" id="choose-folder" class="folder-button"><svg><use href="#i-folder"/></svg><span id="folder-button-label">写真フォルダを選択</span><span class="arrow">↗</span></button><p class="hint" id="local-picker-hint">日付付きフォルダが入った親フォルダを選択。<br>「開く」を押せない場合は下のファイル選択をお試しください。</p><input id="folder-input" type="file" webkitdirectory multiple hidden>
+            <details id="file-selection"><summary>フォルダを選べない場合：写真を選択</summary><label for="file-folder-name">選ぶ写真のフォルダ名</label><input id="file-folder-name" type="text" placeholder="20250815 （夏休み）" autocomplete="off"><p class="hint">同じフォルダの写真をまとめて選択します。日付と名前はここで指定します。「ファイル」画面でフォルダを開き、写真ファイルを選んでください。フォルダ自体は選択しません。</p><button type="button" id="choose-files" class="folder-button">写真ファイルを選択 ↗</button><input id="files-input" type="file" multiple hidden></details>
+          </div>
           <div id="drive-fields" hidden>
             <label for="drive-folder">フォルダURL / ID</label><input id="drive-folder" type="text" placeholder="https://drive.google.com/drive/folders/…" autocomplete="off">
             <details id="drive-setup"><summary>Google接続の初期設定</summary><label for="client-id">OAuthクライアントID</label><input id="client-id" type="text" placeholder="…apps.googleusercontent.com" autocomplete="off"><p class="hint">Google CloudでDrive APIを有効にし、このサイトのURLを許可します。<a href="docs/google-drive.md" target="_blank" rel="noopener">設定手順</a></p></details>

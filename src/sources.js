@@ -26,12 +26,13 @@ async function collectFile(name, id, folder, getFile, result) {
   }
 }
 
-export async function scanFiles(files, onProgress = () => {}) {
+export async function scanFiles(files, onProgress = () => {}, fallbackFolder = null) {
   const result = { photos: [], videos: [], report: issues() };
   let done = 0;
   for (const file of files) {
     const path = file.webkitRelativePath || file.name;
-    await collectFile(file.name, path, nearestFolder(path), async () => file, result);
+    // A regular file picker does not provide the parent folder. Use only explicit metadata.
+    await collectFile(file.name, path, nearestFolder(path) || (!file.webkitRelativePath ? fallbackFolder : null), async () => file, result);
     if (++done % 25 === 0) { onProgress(done); await new Promise(resolve => setTimeout(resolve, 0)); }
   }
   return result;

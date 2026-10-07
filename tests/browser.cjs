@@ -195,6 +195,32 @@ let browser;
   assert.equal(await page.evaluate(() => window.__revoked), 'mock-private-token');
   console.log('PASS Google OAuth, Drive image fetch, token excluded from settings, disconnect revocation (mock API)');
 
+  await browser.addInitScript(() => {
+    Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' });
+    Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 5 });
+  });
+  const ipad = await browser.newPage(); ipad.on('pageerror', error => errors.push(error.message));
+  await ipad.setViewportSize({ width:768, height:1024 });
+  await ipad.goto(process.env.PHOTO_MEMORY_URL || 'http://localhost:5502');
+  await ipad.click('[data-source="local"]');
+  assert.equal(await ipad.locator('#folder-button-label').innerText(), '写真ファイルを選択');
+  assert.equal(await ipad.locator('#files-input').getAttribute('webkitdirectory'), null);
+  await ipad.click('#choose-folder');
+  assert.equal(await ipad.locator('#file-folder-name').evaluate(el => el === document.activeElement), true);
+  await ipad.fill('#file-folder-name', '20250815 （夏休み）');
+  const chooserPromise = ipad.waitForEvent('filechooser');
+  await ipad.click('#choose-folder');
+  const chooser = await chooserPromise;
+  assert.equal(chooser.isMultiple(), true);
+  await chooser.setFiles([{ name:'one.png', mimeType:'image/png', buffer:pixel }, { name:'two.png', mimeType:'image/png', buffer:pixel }]);
+  await ipad.waitForFunction(() => document.querySelectorAll('.memory-tile img').length === 4 && !document.getElementById('apply').disabled);
+  assert.equal(await ipad.locator('#source-name').innerText(), '20250815 （夏休み）');
+  await ipad.click('#reload-source');
+  await ipad.waitForFunction(() => !document.getElementById('apply').disabled);
+  assert.equal(await ipad.locator('.caption span').first().innerText(), '20250815 （夏休み）');
+  await ipad.screenshot({ path:path.join(output, 'PhotoMemoryViewer-ipad-files.png') });
+  console.log('PASS iPad desktop-agent detection, regular multi-file picker, explicit folder metadata and reload (simulated device)');
+
   assert.deepEqual(errors, []);
   await browser.close();
   console.log('PASS no uncaught browser errors');

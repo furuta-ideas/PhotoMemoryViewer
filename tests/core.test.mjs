@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULTS, validDate, datedFolder, nearestFolder, inRange, validateSettings, gridShape, youtubeId, youtubeLinks, driveFolderId, randomSeek, ShuffleBag, RefreshClock } from '../src/core.js';
+import { DEFAULTS, validDate, datedFolder, nearestFolder, inRange, validateSettings, gridShape, youtubeId, youtubeLinks, driveFolderId, randomSeek, ShuffleBag, RefreshClock, prefersFileSelection } from '../src/core.js';
+
+test('iPads with desktop user agent and iPhones prefer individual file selection', () => {
+  assert.equal(prefersFileSelection('Mozilla/5.0 (iPad)', 'iPad', 5), true);
+  assert.equal(prefersFileSelection('Mozilla/5.0 (Macintosh)', 'MacIntel', 5), true);
+  assert.equal(prefersFileSelection('Mozilla/5.0 (iPhone)', 'iPhone', 1), true);
+  assert.equal(prefersFileSelection('Mozilla/5.0 (Macintosh)', 'MacIntel', 0), false);
+  assert.equal(prefersFileSelection('Mozilla/5.0 (Windows NT 10.0)', 'Win32', 5), false);
+});
 
 test('calendar validation includes leap years and rejects rollover dates', () => {
   assert.equal(validDate('20240229'), true);

@@ -1,4 +1,4 @@
-import { DEFAULTS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId } from './core.js';
+import { DEFAULTS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js';
 import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js';
 import { VideoPlayer } from './youtube.js';
 
@@ -8,6 +8,8 @@ let settings = { ...DEFAULTS };
 try { settings = validateSettings({ ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORAGE) || '{}') }); } catch { settings = { ...DEFAULTS }; }
 let draftLayout = settings.layout;
 let source = null, directory = null, importedFiles = null;
+let importedFileFolder = null, pendingFileFolder = null;
+const preferFiles = prefersFileSelection(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
 let photos = [], videos = [], tiles = [], bag = new ShuffleBag([]);
 let playing = false, epoch = 0, busy = false, sourceKind = '', sourceName = '';
 let video = null, videoAudible = false, currentVideo = null, failedVideos = new Set(), badPhotos = new Set();
@@ -26,6 +28,7 @@ function populate() {
   $('volume').value = settings.volume; $('volume-output').value = `${settings.volume}%`;
   $('bgm-mode').value = settings.bgm; $('bgm-volume').value = settings.bgmVolume;
   $('drive-folder').value = settings.driveFolder; $('client-id').value = settings.clientId;
+  $('file-folder-name').value = settings.localFileFolder;
   chooseLayout(settings.layout); chooseTab(settings.sourceTab); $('bgm-fields').hidden = settings.bgm !== 'local';
 }
 function readSettings() {
@@ -33,7 +36,7 @@ function readSettings() {
     refresh: Number($('refresh').value), effect: $('effect').value, fit: $('fit').value,
     youtube: $('youtube-enabled').checked, sound: $('youtube-sound').checked, volume: Number($('volume').value),
     bgm: $('bgm-mode').value, bgmVolume: Number($('bgm-volume').value),
-    driveFolder: $('drive-folder').value.trim(), clientId: $('client-id').value.trim() });
+    driveFolder: $('drive-folder').value.trim(), clientId: $('client-id').value.trim(), localFileFolder: $('file-folder-name').value.trim() });
 }
 function chooseLayout(count) {
   draftLayout = count;
@@ -78,7 +81,7 @@ function hasVideoRoom() {
 }
 function setBusy(value) {
   busy = value;
-  for (const id of ['choose-folder', 'connect-drive', 'reload-source', 'disconnect', 'demo', 'empty-choose', 'apply']) $(id).disabled = value || (['reload-source', 'disconnect'].includes(id) && !source);
+  for (const id of ['choose-folder', 'choose-files', 'connect-drive', 'reload-source', 'disconnect', 'demo', 'empty-choose', 'apply']) $(id).disabled = value || (['reload-source', 'disconnect'].includes(id) && !source);
   $('play').disabled = value || !(photos.length || videos.length);
 }
 function progress(count) { $('source-name').textContent = `読み込み中… ${count}件確認`; }
@@ -97,7 +100,7 @@ async function importSource(loader, kind, name) {
     source = result; sourceKind = kind; sourceName = result.name || name;
     $('restore-folder')?.remove();
     if (kind !== 'drive') drive.disconnect();
-    if (kind !== 'local') { directory = null; importedFiles = null; await storeHandle(null); }
+    if (kind !== 'local') { directory = null; importedFiles = null; importedFileFolder = null; await storeHandle(null); }
     showReport(result.report); sourceLabel();
     await rebuild();
     toast(`${sourceName}\n写真${result.photos.length}枚・動画${result.videos.length}件を読み込みました。`);
@@ -107,12 +110,23 @@ async function importSource(loader, kind, name) {
 }
 async function pickFolder() {
   if (busy) return;
+  if (preferFiles) { pickFiles(); return; }
   if ('showDirectoryPicker' in window) {
     try {
       const handle = await window.showDirectoryPicker({ mode: 'read' });
-      await importSource(async () => { const result = await scanDirectory(handle, progress); directory = handle; importedFiles = null; await storeHandle(handle); return result; }, 'local', handle.name);
+      await importSource(async () => { const result = await scanDirectory(handle, progress); directory = handle; importedFiles = null; importedFileFolder = null; await storeHandle(handle); return result; }, 'local', handle.name);
     } catch (error) { if (error.name !== 'AbortError') toast(error.message || 'フォルダの選択に失敗しました。'); }
   } else $('folder-input').click();
+}
+function pickFiles() {
+  if (busy) return;
+  $('file-selection').open = true;
+  pendingFileFolder = datedFolder($('file-folder-name').value.trim());
+  if (!pendingFileFolder) {
+    toast('写真のフォルダ名を「20250815 （夏休み）」のように入力してください。');
+    $('file-folder-name').focus(); return;
+  }
+  $('files-input').click();
 }
 
 function destroyTiles() {
@@ -298,11 +312,24 @@ $('bgm-file').addEventListener('change', () => {
 });
 $('bgm').addEventListener('error', () => toast('音楽ファイルを再生できません。MP3またはAACをお試しください。'));
 $('choose-folder').addEventListener('click', pickFolder);
+$('choose-files').addEventListener('click', pickFiles);
+$('files-input').addEventListener('change', async () => {
+  const files = [...$('files-input').files]; if (!files.length) return;
+  const folder = pendingFileFolder || datedFolder($('file-folder-name').value.trim());
+  if (!folder) { toast('日付付きフォルダ名を入力してから写真を選択してください。'); $('files-input').value = ''; return; }
+  await importSource(async () => {
+    const result = await scanFiles(files, progress, folder);
+    importedFiles = files; importedFileFolder = folder; directory = null;
+    await storeHandle(null); return result;
+  }, 'local', folder.folder);
+  settings.localFileFolder = folder.folder; persist();
+  pendingFileFolder = null; $('files-input').value = '';
+});
 $('empty-choose').addEventListener('click', () => { setPane(true); settings.sourceTab === 'drive' ? $('drive-folder').focus() : pickFolder(); });
 $('folder-input').addEventListener('change', async () => {
   const files = [...$('folder-input').files]; if (!files.length) return;
   const name = files[0].webkitRelativePath.split('/')[0] || '選択した写真';
-  await importSource(async () => { const result = await scanFiles(files, progress); importedFiles = files; directory = null; await storeHandle(null); return result; }, 'local', name);
+  await importSource(async () => { const result = await scanFiles(files, progress); importedFiles = files; importedFileFolder = null; directory = null; await storeHandle(null); return result; }, 'local', name);
   $('folder-input').value = '';
 });
 async function prepareDrive() {
@@ -329,12 +356,13 @@ $('reload-source').addEventListener('click', async () => {
   if (sourceKind === 'demo') { await importSource(async () => demoSource(), 'demo', 'サンプル'); return; }
   if (directory) {
     try { const permission = await directory.requestPermission({ mode: 'read' }); if (permission !== 'granted') throw new Error('フォルダの読み取りを許可してください。'); await importSource(() => scanDirectory(directory, progress), 'local', directory.name); } catch (error) { toast(error.message); }
-  } else if (importedFiles) { await importSource(() => scanFiles(importedFiles, progress), 'local', sourceName); }
+  } else if (importedFiles) { await importSource(() => scanFiles(importedFiles, progress, importedFileFolder), 'local', sourceName); }
 });
 $('disconnect').addEventListener('click', async () => {
   if (busy) return;
   setBusy(true);
   stop(); drive.disconnect(); preparedClient = ''; source = null; sourceKind = ''; directory = null; importedFiles = null; sourceName = '';
+  importedFileFolder = null; pendingFileFolder = null;
   $('restore-folder')?.remove();
   await storeHandle(null); sourceLabel(); showReport({ skipped: 0, messages: [] }); await rebuild(); setBusy(false); toast('接続を解除しました。');
 });
@@ -365,6 +393,11 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pagehide', () => { stop(); scanController?.abort(); });
 new ResizeObserver(resizeGrid).observe($('viewer'));
 populate(); showPlayback(); resizeGrid();
+if (preferFiles) {
+  $('file-selection').open = true;
+  $('folder-button-label').textContent = '写真ファイルを選択';
+  $('local-picker-hint').textContent = 'iPad・iPhoneでは、下に日付付きフォルダ名を入力し、そのフォルダ内の写真を選択してください。フォルダ全体の自動読み込みにはGoogle Drive接続を使います。';
+}
 if (settings.clientId) prepareDrive().catch(() => {});
 restoreHandle().then(handle => {
   if (!source && !busy && handle) {

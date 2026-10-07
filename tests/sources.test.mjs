@@ -23,6 +23,18 @@ test('directory traversal handles selecting a dated root and ignores undated lea
   assert.equal((await scanDirectory(root)).photos[0].folder, root.name);
   assert.equal((await scanDirectory({ ...root, name: 'root' })).report.skipped, 1);
 });
+
+test('plain file selections use an explicit date folder and retain date filtering metadata', async () => {
+  const folder = { date: '20250815', folder: '20250815 （夏休み）' };
+  const image = new File(['image'], 'one.jpg', { type: 'image/jpeg' });
+  const link = new File(['https://youtu.be/dQw4w9WgXcQ'], 'video.txt');
+  const result = await scanFiles([image, link], () => {}, folder);
+  assert.equal(result.photos.length, 1); assert.equal(result.videos.length, 1);
+  assert.equal(result.photos[0].date, folder.date); assert.equal(result.videos[0].folder, folder.folder);
+  assert.equal((await scanFiles([image])).photos.length, 0);
+  const nested = file('a.jpg', 'root/20240403 （旅）/a.jpg');
+  assert.equal((await scanFiles([nested], () => {}, folder)).photos[0].date, '20240403');
+});
 test('Drive scan follows nextPageToken and inherits nearest folder', async context => {
   const requests = [];
   const source = new DriveSource(); source.token = 'test-token'; source.expires = Date.now() + 60000;
