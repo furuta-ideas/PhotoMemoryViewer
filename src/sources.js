@@ -1,7 +1,8 @@
-import { datedFolder, nearestFolder, youtubeLinks, driveFolderId } from './core.js?v=20261008-range8';
+import { datedFolder, nearestFolder, youtubeLinks, driveFolderId } from './core.js?v=20261008-start9';
 const IMAGE = /\.(jpe?g|png|webp|gif)$/i;
 const LINK = /\.(txt|url)$/i;
 const SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
+export const DRIVE_SESSION = 'photo-memory-viewer.drive-session.v1';
 export const issues = () => ({ skipped: 0, messages: [] });
 function skip(report, message) { report.skipped++; if (report.messages.length < 50) report.messages.push(message); }
 
@@ -87,11 +88,38 @@ export function loadScript(url, ready) {
 }
 
 export class DriveSource {
-  constructor() { this.token = null; this.expires = 0; this.client = null; this.clientId = ''; }
+  constructor(storage) {
+    this.token = null; this.expires = 0; this.client = null; this.clientId = '';
+    try { this.storage = storage === undefined ? globalThis.window?.sessionStorage : storage; } catch { this.storage = null; }
+  }
+  clearSession() {
+    this.token = null; this.expires = 0;
+    try { this.storage?.removeItem(DRIVE_SESSION); } catch { /* Memory-only authorization remains usable. */ }
+  }
+  hasAuthorization() {
+    if (this.token && Date.now() < this.expires) return true;
+    this.clearSession(); return false;
+  }
+  restoreSession(clientId) {
+    try {
+      const saved = JSON.parse(this.storage?.getItem(DRIVE_SESSION) || 'null');
+      if (!saved || saved.clientId !== clientId || saved.scope !== SCOPE || typeof saved.token !== 'string' || !saved.token || !Number.isFinite(saved.expires) || saved.expires <= Date.now() || saved.expires > Date.now() + 3600000) { this.clearSession(); return false; }
+      this.clientId = clientId; this.token = saved.token; this.expires = saved.expires; return true;
+    } catch { this.clearSession(); return false; }
+  }
+  restorePhotos(records) {
+    if (!Array.isArray(records)) return [];
+    return records.slice(0, 16).flatMap(record => {
+      const folder = datedFolder(String(record?.folder || ''));
+      if (!folder || folder.date !== record.date || typeof record.id !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(record.id)) return [];
+      const id = record.id;
+      return [{id,name:String(record.name || '').slice(0,255),...folder,load:async signal=>URL.createObjectURL(await this.request(`files/${encodeURIComponent(id)}`,{alt:'media'},signal,true))}];
+    });
+  }
   async prepare(clientId) {
     if (!clientId.endsWith('.apps.googleusercontent.com')) throw new Error('Google Cloudで取得したOAuthクライアントIDを設定してください。');
     await loadScript('https://accounts.google.com/gsi/client', () => !!window.google?.accounts?.oauth2);
-    if (clientId !== this.clientId) { this.token = null; this.expires = 0; }
+    if (clientId !== this.clientId) this.clearSession();
     this.clientId = clientId;
     this.client = window.google.accounts.oauth2.initTokenClient({ client_id: clientId, scope: SCOPE, callback: () => {} });
   }
@@ -99,15 +127,18 @@ export class DriveSource {
     if (!this.client) throw new Error('Google接続の初期設定を完了してください。');
     return new Promise((resolve, reject) => {
       this.client.callback = response => {
-        if (response.error || !response.access_token || !window.google.accounts.oauth2.hasGrantedAllScopes(response, SCOPE)) { reject(new Error('Driveの読み取り権限が許可されませんでした。')); return; }
-        this.token = response.access_token; this.expires = Date.now() + response.expires_in * 1000 - 30000; resolve();
+        const lifetime = Number(response.expires_in);
+        if (response.error || !response.access_token || !Number.isFinite(lifetime) || lifetime <= 30 || !window.google.accounts.oauth2.hasGrantedAllScopes(response, SCOPE)) { this.clearSession(); reject(new Error('Driveの読み取り権限が許可されませんでした。')); return; }
+        this.token = response.access_token; this.expires = Date.now() + Math.min(lifetime, 3600) * 1000 - 30000;
+        try { this.storage?.setItem(DRIVE_SESSION, JSON.stringify({token:this.token,expires:this.expires,clientId:this.clientId,scope:SCOPE})); } catch { /* Storage-disabled browsers can still connect manually. */ }
+        resolve();
       };
       this.client.error_callback = () => reject(new Error('Google認証がキャンセルまたはブロックされました。もう一度接続してください。'));
       this.client.requestAccessToken({ prompt: '' });
     });
   }
   async request(path, params = {}, signal, blob = false) {
-    if (!this.token || Date.now() >= this.expires) throw Object.assign(new Error('Googleの認証が切れました。「Googleに接続」を押して再認証してください。'), { code: 'AUTH' });
+    if (!this.hasAuthorization()) throw Object.assign(new Error('Googleの認証が切れました。「Googleに接続」を押して再認証してください。'), { code: 'AUTH' });
     const url = `https://www.googleapis.com/drive/v3/${path}?${new URLSearchParams(params)}`;
     for (let attempt = 0; attempt < 4; attempt++) {
       let response;
@@ -115,7 +146,7 @@ export class DriveSource {
       try { response = await fetch(url, { cache: 'no-store', headers: { Authorization: `Bearer ${this.token}` }, signal }); }
       catch (error) { if (error.name === 'AbortError') throw error; throw Object.assign(new Error('ネットワークに接続できません。接続を確認してPlayまたは再読み込みを押してください。'), { code: 'NETWORK' }); }
       if (response.ok) return blob ? response.blob() : response.json();
-      if (response.status === 401) { this.token = null; this.expires = 0; throw Object.assign(new Error('Googleに再接続してください。'), { code: 'AUTH' }); }
+      if (response.status === 401) { this.clearSession(); throw Object.assign(new Error('Googleに再接続してください。'), { code: 'AUTH' }); }
       const body = await response.json().catch(() => ({}));
       const rateLimit = response.status === 429 || response.status >= 500 || body.error?.errors?.some(e => /rateLimitExceeded|userRateLimitExceeded/.test(e.reason));
       if (rateLimit && attempt < 3) { await new Promise(resolve => setTimeout(resolve, 1000 * 2 ** attempt)); continue; }
@@ -136,14 +167,17 @@ export class DriveSource {
     } while (pageToken);
     return folders;
   }
-  async scan(value, onProgress = () => {}, signal) {
+  async scan(value, onProgress = () => {}, signal, onBatch = () => {}) {
     const id = driveFolderId(value);
     const root = await this.request(`files/${id}`, { fields: 'id,name,mimeType' }, signal);
     if (root.mimeType !== 'application/vnd.google-apps.folder') throw new Error('写真の入ったフォルダを指定してください。');
     const result = { photos: [], videos: [], report: issues(), name: root.name };
+    onBatch({photos:[],videos:[],name:root.name});
     let done = 0;
+    const links = [];
     const visited = new Set();
     const walk = async (dir, inherited) => {
+      signal?.throwIfAborted();
       if (visited.has(dir.id)) return; visited.add(dir.id);
       const folder = datedFolder(dir.name) || inherited;
       let pageToken = '';
@@ -151,19 +185,31 @@ export class DriveSource {
         const params = { q: `'${dir.id}' in parents and trashed = false`, fields: 'nextPageToken,files(id,name,mimeType)', pageSize: '1000' };
         if (pageToken) params.pageToken = pageToken;
         const page = await this.request('files', params, signal);
+        const directories = [], firstPhoto = result.photos.length;
         for (const entry of page.files || []) {
-          if (entry.mimeType === 'application/vnd.google-apps.folder') await walk(entry, folder);
+          if (entry.mimeType === 'application/vnd.google-apps.folder') directories.push(entry);
+          else if (LINK.test(entry.name)) links.push({entry,folder});
           else await collectFile(entry.name, entry.id, folder, s => this.request(`files/${entry.id}`, { alt: 'media' }, s || signal, true), result);
           onProgress(++done);
         }
+        // Publish photos before visiting slower descendants or reading YouTube link files.
+        if (result.photos.length > firstPhoto) onBatch({photos:result.photos.slice(firstPhoto),videos:[]});
+        for (const child of directories) await walk(child, folder);
         pageToken = page.nextPageToken;
       } while (pageToken);
     };
-    await walk(root, null); return result;
+    await walk(root, null);
+    for (const {entry,folder} of links) {
+      signal?.throwIfAborted();
+      const firstVideo = result.videos.length;
+      await collectFile(entry.name, entry.id, folder, s => this.request(`files/${entry.id}`, { alt: 'media' }, s || signal, true), result);
+      if (result.videos.length > firstVideo) onBatch({photos:[],videos:result.videos.slice(firstVideo)});
+    }
+    return result;
   }
   disconnect() {
     if (this.token && window.google?.accounts?.oauth2) window.google.accounts.oauth2.revoke(this.token, () => {});
-    this.token = null; this.expires = 0; this.client = null; this.clientId = '';
+    this.clearSession(); this.client = null; this.clientId = '';
   }
 }
 

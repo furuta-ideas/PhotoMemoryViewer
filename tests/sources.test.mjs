@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { scanFiles, scanDirectory, DriveSource } from '../src/sources.js';
+import { scanFiles, scanDirectory, DriveSource, DRIVE_SESSION } from '../src/sources.js';
 
 function file(name, path, content = 'image', type = 'image/jpeg') { const f = new File([content], name, { type }); Object.defineProperty(f, 'webkitRelativePath', { value: path }); return f; }
 
@@ -91,4 +91,50 @@ test('Drive folder name search escapes query syntax and follows pagination', asy
   assert.equal(result.length,2); assert.equal(queries[1].pageToken,'next');
   assert.ok(queries[0].q.includes("someone\\'s"));
   await assert.rejects(source.findFolders('  '));
+});
+
+test('Drive restores only matching unexpired tab sessions and clears revoked tokens', async context => {
+  const items = new Map(), storage = {getItem:key=>items.get(key),setItem:(key,value)=>items.set(key,value),removeItem:key=>items.delete(key)};
+  const source = new DriveSource(storage), clientId = 'test.apps.googleusercontent.com';
+  const saved = {token:'private-token',clientId,scope:'https://www.googleapis.com/auth/drive.readonly',expires:Date.now()+60000};
+  storage.setItem(DRIVE_SESSION,JSON.stringify(saved));
+  assert.equal(source.restoreSession(clientId),true);assert.equal(source.hasAuthorization(),true);
+  context.mock.method(globalThis,'fetch',async()=>Response.json({}, {status:401}));
+  await assert.rejects(source.request('files'),error=>error.code==='AUTH');
+  assert.equal(items.has(DRIVE_SESSION),false);assert.equal(source.token,null);
+  for (const patch of [{expires:Date.now()-1},{clientId:'other.apps.googleusercontent.com'},{scope:'wrong'},{expires:Date.now()+7200000}]) {
+    storage.setItem(DRIVE_SESSION,JSON.stringify({...saved,...patch}));
+    assert.equal(source.restoreSession(clientId),false);assert.equal(items.has(DRIVE_SESSION),false);
+  }
+  storage.setItem(DRIVE_SESSION,'not-json');assert.equal(source.restoreSession(clientId),false);
+});
+
+test('Drive publishes photos before delayed descendants and before YouTube link downloads', async context => {
+  const source = new DriveSource(null), batches = [], events = [];
+  let release; const gate = new Promise(resolve=>{release=resolve;});
+  let first; const found = new Promise(resolve=>{first=resolve;});
+  context.mock.method(source,'request',async(path,params)=>{
+    if (path==='files/abcdefghijklmnop') return {id:'abcdefghijklmnop',name:'20200101 アルバム',mimeType:'application/vnd.google-apps.folder'};
+    if (params.alt==='media') {events.push('link');return new Blob(['https://youtu.be/dQw4w9WgXcQ']);}
+    if (params.q.includes('slow')) {await gate;return {files:[{id:'later',name:'later.jpg'}]};}
+    return {files:[{id:'slow',name:'subfolder',mimeType:'application/vnd.google-apps.folder'},{id:'link',name:'video.url'},{id:'early',name:'early.jpg'}]};
+  });
+  let completed = false;
+  const scan = source.scan('abcdefghijklmnop',()=>{},undefined,batch=>{batches.push(batch);if(batch.photos.length){events.push(batch.photos[0].id);first();}}).then(result=>{completed=true;return result;});
+  await found;
+  assert.equal(completed,false);assert.equal(events[0],'early');assert.equal(events.includes('link'),false);
+  release();const result=await scan;
+  assert.deepEqual(result.photos.map(photo=>photo.id),['early','later']);
+  assert.equal(result.videos.length,1);assert.deepEqual(events,['early','later','link']);
+  assert.equal(batches[0].name,'20200101 アルバム');
+});
+
+test('Drive quick-start metadata is bounded, validated and still loads online on demand', async context => {
+  const source = new DriveSource(null), records = Array.from({length:30},(_,i)=>({id:'photo'+i,name:i+'.jpg',folder:'20200101 家族',date:'20200101',data:'ignored'}));
+  const restored = source.restorePhotos(records);
+  assert.equal(restored.length,16);assert.equal(restored[0].data,undefined);
+  assert.equal(source.restorePhotos([{...records[0],id:'../other'},{...records[0],date:'20200102'},{id:'photo'}]).length,0);
+  let requests=0;
+  context.mock.method(source,'request',async(path,params)=>{requests++;assert.equal(path,'files/photo0');assert.equal(params.alt,'media');return new Blob(['image']);});
+  assert.equal(requests,0);const url=await restored[0].load();assert.equal(requests,1);URL.revokeObjectURL(url);
 });
