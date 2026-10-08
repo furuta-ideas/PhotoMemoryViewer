@@ -9,6 +9,14 @@
 
 iPadでは最初からGoogle Driveの設定が開きます。別のアルバムの検索やフォルダURLの指定は「別のアルバム・詳細設定」にあります。Windowsの「この端末」から同期済みフォルダを選択する操作も利用できます。
 
+## iPadの写真保存と容量
+
+初回は主にフォルダ・ファイルの一覧を取得します。写真本体は表示する枠の分だけ取得し、ブラウザ内で一時表示します。iPadの「写真」「ファイル」や、アプリのlocalStorage・IndexedDBに写真のコピーを保存しません。Google Drive APIへの取得は `cache: 'no-store'` を指定し、ブラウザのHTTPキャッシュにも新しく保存しません。写真を入れ替えると、エフェクト終了後に古い写真のBlob URLを解放します。
+
+表示するには写真データの転送と一時メモリが必要です。SafariやOSの内部処理まで含めて端末容量の使用が完全にゼロになることは保証しませんが、アルバム全体や見た写真をアプリが蓄積する方式ではありません。同じ写真の再表示でも通信するため、インターネット接続が必要で、オフライン再生はできません。過去の版やGoogle Driveアプリが別途保存したデータは、この変更では削除しません。
+
+期間は開始日・終了日のバーで1992年1月1日～2050年12月31日の間を1日単位で選びます。日付欄への直接入力も可能です。「全期間に戻す」で両端を初期値へ戻し、「設定を適用」で反映します。
+
 **公開用Google接続IDを2026年10月8日に設定しました。** iPadやWindowsでIDを入力する必要はありません。「Googleに接続して写真を表示」から、写真のあるGoogleアカウントを選択して読み取りを許可してください。Google Cloud側のDrive APIの有効化、承認済み生成元、テストユーザーの登録も必要です。これらの管理画面の設定完了や、実アカウントでの写真読み込み成功はアプリ側でIDを保存するだけでは確認できません。
 
 管理者が公開OAuthクライアントIDを `src/deployment-config.js` の `GOOGLE_CLIENT_ID` に設定すると、各端末でIDの入力は不要になります。Client Secretやアクセストークンはこのファイルへ書かないでください。承認済みJavaScript生成元は `https://furuta-ideas.github.io` です。
@@ -54,6 +62,8 @@ SafariでHTTPS配信されたアプリを開きます。PCで動かしているl
 - [Google Identity Services token model](https://developers.google.com/identity/oauth2/web/guides/use-token-model)
 - [Drive API files.list](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list)
 - [Drive API OAuth scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)
+- [ブラウザのno-storeキャッシュ設定](https://developer.mozilla.org/en-US/docs/Web/API/Request/cache)
+- [表示済みBlob URLの解放](https://developer.mozilla.org/en-US/docs/Web/API/URL/revokeObjectURL_static)
 
 ## アルバムの親フォルダを選択する
 

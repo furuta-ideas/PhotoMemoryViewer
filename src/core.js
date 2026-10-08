@@ -1,5 +1,6 @@
 export const DRIVE_ALBUMS = Object.freeze(['①古田家の思い出アルバム', '②じいじの思い出アルバム']);
-export const DEFAULTS = Object.freeze({ start: '', end: '', layout: 4, refresh: 15, effect: 'smooth', fit: 'cover', youtube: true, sound: true, volume: 70, bgm: 'off', bgmVolume: 40, sourceTab: 'local', driveFolder: '', clientId: '', localFileFolder: '', driveAlbums: DRIVE_ALBUMS });
+export const DATE_MIN = '19920101', DATE_MAX = '20501231';
+export const DEFAULTS = Object.freeze({ start: DATE_MIN, end: DATE_MAX, layout: 4, refresh: 15, effect: 'smooth', fit: 'cover', youtube: true, sound: true, volume: 70, bgm: 'off', bgmVolume: 40, sourceTab: 'local', driveFolder: '', clientId: '', localFileFolder: '', driveAlbums: DRIVE_ALBUMS });
 
 export function prefersFileSelection(userAgent, platform, touchPoints) {
   return /iPad|iPhone|iPod/i.test(userAgent) || (platform === 'MacIntel' && touchPoints > 1);
@@ -10,6 +11,22 @@ export function validDate(value) {
   const year = +value.slice(0, 4), month = +value.slice(4, 6), day = +value.slice(6);
   const d = new Date(0); d.setUTCFullYear(year, month - 1, day); d.setUTCHours(0, 0, 0, 0);
   return year >= 1 && d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day;
+}
+
+// UTC day offsets keep sliders exact through leap years and daylight-saving changes.
+const FIRST_DAY = Date.UTC(1992, 0, 1), DAY_MS = 86400000;
+export function dateToDay(value) {
+  if (!validDate(value) || value < DATE_MIN || value > DATE_MAX) throw new Error('日付は1992年1月1日～2050年12月31日で指定してください。');
+  return (Date.UTC(+value.slice(0, 4), +value.slice(4, 6) - 1, +value.slice(6)) - FIRST_DAY) / DAY_MS;
+}
+export const DATE_DAYS = dateToDay(DATE_MAX);
+export function dayToDate(day) {
+  if (!Number.isInteger(day) || day < 0 || day > DATE_DAYS) throw new Error('日付スライダーの値が不正です。');
+  return new Date(FIRST_DAY + day * DAY_MS).toISOString().slice(0, 10).replaceAll('-', '');
+}
+
+export function boundedDate(value, fallback) {
+  return validDate(value) ? (value < DATE_MIN ? DATE_MIN : value > DATE_MAX ? DATE_MAX : value) : fallback;
 }
 
 export function datedFolder(name) {
@@ -26,6 +43,7 @@ export function inRange(item, start, end) { return (!start || item.date >= start
 export function validateSettings(s) {
   if (s.start && !validDate(s.start)) throw new Error('開始日は実在する日付をYYYYMMDDで入力してください。');
   if (s.end && !validDate(s.end)) throw new Error('終了日は実在する日付をYYYYMMDDで入力してください。');
+  if ([s.start, s.end].some(value => value && (value < DATE_MIN || value > DATE_MAX))) throw new Error('期間は1992年1月1日～2050年12月31日で指定してください。');
   if (s.start && s.end && s.start > s.end) throw new Error('開始日は終了日以前にしてください。');
   if (![1, 2, 3, 4, 6, 8].includes(s.layout)) throw new Error('画面分割数が不正です。');
   if (!Number.isInteger(s.refresh) || s.refresh < 4 || s.refresh > 3600) throw new Error('リフレッシュ時間は4～3600秒の整数にしてください。');

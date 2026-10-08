@@ -1,4 +1,4 @@
-import { datedFolder, nearestFolder, youtubeLinks, driveFolderId } from './core.js?v=20261008-google7';
+import { datedFolder, nearestFolder, youtubeLinks, driveFolderId } from './core.js?v=20261008-range8';
 const IMAGE = /\.(jpe?g|png|webp|gif)$/i;
 const LINK = /\.(txt|url)$/i;
 const SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
@@ -111,7 +111,8 @@ export class DriveSource {
     const url = `https://www.googleapis.com/drive/v3/${path}?${new URLSearchParams(params)}`;
     for (let attempt = 0; attempt < 4; attempt++) {
       let response;
-      try { response = await fetch(url, { headers: { Authorization: `Bearer ${this.token}` }, signal }); }
+      // Display on demand without retaining Drive responses in the browser HTTP cache.
+      try { response = await fetch(url, { cache: 'no-store', headers: { Authorization: `Bearer ${this.token}` }, signal }); }
       catch (error) { if (error.name === 'AbortError') throw error; throw Object.assign(new Error('ネットワークに接続できません。接続を確認してPlayまたは再読み込みを押してください。'), { code: 'NETWORK' }); }
       if (response.ok) return blob ? response.blob() : response.json();
       if (response.status === 401) { this.token = null; this.expires = 0; throw Object.assign(new Error('Googleに再接続してください。'), { code: 'AUTH' }); }

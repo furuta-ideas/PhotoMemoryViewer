@@ -1,7 +1,7 @@
-import { DEFAULTS, DRIVE_ALBUMS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261008-google7';
-import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261008-google7';
-import { VideoPlayer } from './youtube.js?v=20261008-google7';
-import { GOOGLE_CLIENT_ID } from './deployment-config.js?v=20261008-google7';
+import { DEFAULTS, DRIVE_ALBUMS, DATE_MIN, DATE_MAX, DATE_DAYS, validDate, dateToDay, dayToDate, boundedDate, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261008-range8';
+import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261008-range8';
+import { VideoPlayer } from './youtube.js?v=20261008-range8';
+import { GOOGLE_CLIENT_ID } from './deployment-config.js?v=20261008-range8';
 
 const $ = id => document.getElementById(id);
 const STORAGE = 'photo-memory-viewer.settings.v1';
@@ -11,6 +11,7 @@ try {
   const saved = JSON.parse(localStorage.getItem(STORAGE) || '{}');
   // Apply the new fill mode once to existing installations; later choices remain saved.
   settings = validateSettings({ ...DEFAULTS, ...saved, fit: saved.photoFitVersion === 1 ? (saved.fit || DEFAULTS.fit) : 'cover', clientId: GOOGLE_CLIENT_ID || saved.clientId || '', photoFitVersion: 1,
+    start: boundedDate(saved.start, DATE_MIN), end: boundedDate(saved.end, DATE_MAX),
     sourceTab: preferFiles && saved.driveUiVersion !== 1 ? 'drive' : (saved.sourceTab || (preferFiles ? 'drive' : 'local')), driveUiVersion: 1,
     driveAlbums: Array.isArray(saved.driveAlbums) ? saved.driveAlbums.filter(name => DRIVE_ALBUMS.includes(name)) : [...DRIVE_ALBUMS] });
 } catch { settings = { ...DEFAULTS, sourceTab: preferFiles ? 'drive' : 'local', clientId: GOOGLE_CLIENT_ID, photoFitVersion: 1, driveUiVersion: 1 }; }
@@ -31,6 +32,7 @@ function persist() { try { localStorage.setItem(STORAGE, JSON.stringify(settings
 function formError(message = '') { $('form-error').textContent = message; $('form-error').hidden = !message; }
 function populate() {
   $('start-date').value = settings.start; $('end-date').value = settings.end;
+  for (const bound of ['start', 'end']) { $(`${bound}-range`).max = DATE_DAYS; syncDateSlider(bound); }
   $('refresh').value = settings.refresh; $('effect').value = settings.effect; $('fit').value = settings.fit;
   $('youtube-enabled').checked = settings.youtube; $('youtube-sound').checked = settings.sound;
   $('volume').value = settings.volume; $('volume-output').value = `${settings.volume}%`;
@@ -41,11 +43,30 @@ function populate() {
   chooseLayout(settings.layout); chooseTab(settings.sourceTab); $('bgm-fields').hidden = settings.bgm !== 'local';
 }
 function readSettings() {
-  return validateSettings({ ...settings, start: $('start-date').value.trim(), end: $('end-date').value.trim(), layout: draftLayout,
+  return validateSettings({ ...settings, start: $('start-date').value.trim() || DATE_MIN, end: $('end-date').value.trim() || DATE_MAX, layout: draftLayout,
     refresh: Number($('refresh').value), effect: $('effect').value, fit: $('fit').value,
     youtube: $('youtube-enabled').checked, sound: $('youtube-sound').checked, volume: Number($('volume').value),
     bgm: $('bgm-mode').value, bgmVolume: Number($('bgm-volume').value),
     driveFolder: $('drive-folder').value.trim(), clientId: $('client-id').value.trim(), localFileFolder: $('file-folder-name').value.trim() });
+}
+function displayDate(value) { return `${value.slice(0, 4)}年${Number(value.slice(4, 6))}月${Number(value.slice(6))}日`; }
+function syncDateSlider(bound) {
+  const value = $(`${bound}-date`).value.trim() || (bound === 'start' ? DATE_MIN : DATE_MAX);
+  const valid = validDate(value) && value >= DATE_MIN && value <= DATE_MAX;
+  $(`${bound}-date`).setAttribute('aria-invalid', String(!valid));
+  $(`${bound}-date-label`).value = valid ? displayDate(value) : '日付を確認してください';
+  if (!valid) return;
+  $(`${bound}-range`).value = dateToDay(value);
+  $(`${bound}-range`).setAttribute('aria-valuetext', displayDate(value));
+}
+function moveDateSlider(bound) {
+  const value = dayToDate(Number($(`${bound}-range`).value));
+  $(`${bound}-date`).value = value;
+  const other = bound === 'start' ? 'end' : 'start';
+  const otherValue = $(`${other}-date`).value.trim() || (other === 'start' ? DATE_MIN : DATE_MAX);
+  // A single-day period is valid; dragging through the other handle moves it along.
+  if (validDate(otherValue) && (bound === 'start' ? value > otherValue : value < otherValue)) $(`${other}-date`).value = value;
+  syncDateSlider(bound); syncDateSlider(other); formError();
 }
 function chooseLayout(count) {
   draftLayout = count;
@@ -317,6 +338,8 @@ $('settings-form').addEventListener('submit', async event => {
   event.preventDefault(); if (busy) return;
   try {
     const next = readSettings(); formError(); settings = next; persist();
+    $('start-date').value = settings.start; $('end-date').value = settings.end;
+    syncDateSlider('start'); syncDateSlider('end');
     if (settings.bgm === 'local' && !bgmURL) toast('BGM用の音楽ファイルを選択してください。');
     await rebuild(); toast('設定を適用しました。');
   } catch (error) { formError(error.message); }
@@ -324,6 +347,14 @@ $('settings-form').addEventListener('submit', async event => {
 document.querySelectorAll('[data-layout]').forEach(button => button.addEventListener('click', () => chooseLayout(Number(button.dataset.layout))));
 document.querySelectorAll('[data-source]').forEach(button => button.addEventListener('click', () => chooseTab(button.dataset.source)));
 $('refresh').addEventListener('input', rhythmHint);
+for (const bound of ['start', 'end']) {
+  $(`${bound}-range`).addEventListener('input', () => moveDateSlider(bound));
+  $(`${bound}-date`).addEventListener('input', () => syncDateSlider(bound));
+}
+$('all-dates').addEventListener('click', () => {
+  $('start-date').value = DATE_MIN; $('end-date').value = DATE_MAX;
+  syncDateSlider('start'); syncDateSlider('end'); formError();
+});
 $('volume').addEventListener('input', () => { $('volume-output').value = `${$('volume').value}%`; });
 $('bgm-mode').addEventListener('change', () => { $('bgm-fields').hidden = $('bgm-mode').value !== 'local'; });
 $('bgm-file').addEventListener('change', () => {

@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#141918">
   <meta name="description" content="写真と動画で、大切な思い出をもう一度。">
   <title>メモリービューワー | PhotoMemoryViewer</title>
-  <link rel="stylesheet" href="styles.css?v=20261008-google7">
-  <script type="module" src="src/app.js?v=20261008-google7"></script>
+  <link rel="stylesheet" href="styles.css?v=20261008-range8">
+  <script type="module" src="src/app.js?v=20261008-range8"></script>
 </head>
 <body>
   <svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
@@ -50,6 +50,7 @@
             <p id="drive-status" class="hint" role="status" aria-live="polite" hidden></p>
             <div id="drive-folder-results" role="group" aria-label="親フォルダの検索結果" hidden></div>
             <p class="hint">選んだアルバムの下の日付付きフォルダをまとめて読み込みます。iPadでもWindowsでも同じアルバム名を使います。Googleの画面では写真のあるアカウントを選び、読み取りを許可してください。</p>
+            <p class="hint drive-storage-note">写真は表示する分だけオンラインで取得し、入れ替え後に解放します。端末への写真保存は行いません。閲覧中はインターネット接続が必要です。</p>
             <details id="drive-advanced"><summary>別のアルバム・詳細設定</summary>
             <label for="drive-search-name">別のアルバムの親フォルダ名</label><input id="drive-search-name" type="text" placeholder="アルバム名で検索" autocomplete="off">
             <button type="button" id="find-drive-folder" class="folder-button">名前でフォルダを探す</button>
@@ -63,7 +64,12 @@
           <details id="scan-details" hidden><summary id="scan-summary">読み込み結果</summary><ul id="scan-errors"></ul></details>
         </section>
         <section class="setting-section"><h3><span>02</span> 思い出の期間</h3>
-          <div class="date-fields"><div><label for="start-date">開始日</label><input id="start-date" type="text" inputmode="numeric" maxlength="8" placeholder="YYYYMMDD" aria-describedby="date-hint"></div><span>—</span><div><label for="end-date">終了日</label><input id="end-date" type="text" inputmode="numeric" maxlength="8" placeholder="YYYYMMDD" aria-describedby="date-hint"></div></div><p class="hint" id="date-hint">空欄の場合は、すべての期間を表示します。</p>
+          <div class="period-control"><label for="start-range">開始日 <output id="start-date-label" for="start-range">1992年1月1日</output></label><input id="start-range" type="range" min="0" step="1" value="0" aria-describedby="date-hint"></div>
+          <div class="period-control"><label for="end-range">終了日 <output id="end-date-label" for="end-range">2050年12月31日</output></label><input id="end-range" type="range" min="0" step="1" value="0" aria-describedby="date-hint"></div>
+          <div class="date-scale" aria-hidden="true"><span>1992年</span><span>2050年</span></div>
+          <button type="button" id="all-dates" class="period-reset">全期間に戻す</button>
+          <p class="hint" id="date-hint">バーを動かして年月日を選択します。1992年1月1日～2050年12月31日。細かい日付は下の欄でYYYYMMDDを直接入力できます。「設定を適用」で反映します。</p>
+          <div class="date-fields"><div><label for="start-date">開始日を直接入力</label><input id="start-date" type="text" inputmode="numeric" maxlength="8" placeholder="YYYYMMDD" aria-describedby="date-hint"></div><span>—</span><div><label for="end-date">終了日を直接入力</label><input id="end-date" type="text" inputmode="numeric" maxlength="8" placeholder="YYYYMMDD" aria-describedby="date-hint"></div></div>
         </section>
         <section class="setting-section"><h3><span>03</span> 表示とリズム</h3>
           <label id="layout-label">画面分割 <span class="field-note">初期設定：4画面</span></label><div class="layout-options" role="group" aria-labelledby="layout-label">
@@ -89,7 +95,7 @@
         <p id="form-error" class="form-error" role="alert" hidden></p><div class="apply-wrap"><button id="apply" class="apply-button" type="submit">設定を適用 <span>→</span></button></div>
       </form>
       <p class="pane-footer">大切な時間を、もう一度。</p>
-      <p id="app-updated" class="pane-footer">更新日：<time datetime="2026-10-08">2026年10月8日</time><br>バージョン：20261008-google7</p>
+      <p id="app-updated" class="pane-footer">更新日時：<time datetime="2026-10-08T13:34:00+09:00">2026年10月8日 13:34（日本時間）</time><br>バージョン：20261008-range8</p>
     </aside>
     <section class="viewer" aria-label="思い出の写真" id="viewer">
       <div class="viewer-topline"><span id="viewer-title">あなたの思い出を、ここに。</span><span id="viewer-count">READY WHEN YOU ARE</span></div>

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULTS, validDate, datedFolder, nearestFolder, inRange, validateSettings, gridShape, youtubeId, youtubeLinks, driveFolderId, randomSeek, ShuffleBag, RefreshClock, prefersFileSelection } from '../src/core.js';
+import { DEFAULTS, DATE_MIN, DATE_MAX, DATE_DAYS, dateToDay, dayToDate, boundedDate, validDate, datedFolder, nearestFolder, inRange, validateSettings, gridShape, youtubeId, youtubeLinks, driveFolderId, randomSeek, ShuffleBag, RefreshClock, prefersFileSelection } from '../src/core.js';
 
 test('iPads with desktop user agent and iPhones prefer individual file selection', () => {
   assert.equal(prefersFileSelection('Mozilla/5.0 (iPad)', 'iPad', 5), true);
@@ -23,6 +23,23 @@ test('folder parsing and nearest dated ancestor', () => {
   assert.equal(nearestFolder('root/20240403 （旅）/未整理/a.jpg').date, '20240403');
   assert.equal(nearestFolder('root/20240403 （旅）/20250815 （海）/a.jpg').date, '20250815');
   assert.equal(nearestFolder('root/画像/a.jpg'), null);
+});
+test('daily sliders round-trip every date from 1992 to 2050, including leap days', () => {
+  assert.equal(dayToDate(0), DATE_MIN); assert.equal(dayToDate(DATE_DAYS), DATE_MAX);
+  for (let day = 0; day <= DATE_DAYS; day++) assert.equal(dateToDay(dayToDate(day)), day);
+  assert.equal(dayToDate(dateToDay('19920228') + 1), '19920229');
+  assert.equal(dayToDate(dateToDay('20000229') + 1), '20000301');
+  assert.equal(dayToDate(dateToDay('20230228') + 1), '20230301');
+  for (const value of ['19911231', '20510101', '20230229']) assert.throws(() => dateToDay(value));
+  for (const day of [-1, DATE_DAYS + 1, .5, NaN]) assert.throws(() => dayToDate(day));
+});
+test('existing empty or out-of-range periods migrate without changing supported dates', () => {
+  assert.equal(boundedDate('', DATE_MIN), DATE_MIN); assert.equal(boundedDate('', DATE_MAX), DATE_MAX);
+  assert.equal(boundedDate('19801231', DATE_MIN), DATE_MIN);
+  assert.equal(boundedDate('20600101', DATE_MAX), DATE_MAX);
+  assert.equal(boundedDate('20240229', DATE_MIN), '20240229');
+  assert.equal(boundedDate('20230229', DATE_MIN), DATE_MIN);
+  for (const patch of [{start:'19911231'},{end:'20510101'}]) assert.throws(() => validateSettings({...DEFAULTS,...patch}), /1992/);
 });
 test('inclusive filtering and invalid settings', () => {
   const item = { date: '20240403' };

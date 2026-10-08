@@ -59,6 +59,28 @@ test('Drive refuses expired tokens and marks HTTP401 for reconnect', async conte
   await assert.rejects(source.request('files'), error => error.code === 'AUTH');
 });
 
+test('Drive scans metadata lazily and does not cache metadata or displayed photo bytes', async context => {
+  const source = new DriveSource(); source.token = 'test-token'; source.expires = Date.now() + 60000;
+  const requests = [];
+  context.mock.method(globalThis, 'fetch', async (urlString, options) => {
+    const url = new URL(urlString); requests.push({url, options});
+    if (url.searchParams.get('alt') === 'media') return new Response(new Blob(['image'], {type:'image/jpeg'}));
+    if (url.pathname.endsWith('/abcdefghijklmnop')) return Response.json({id:'abcdefghijklmnop',name:'20240229 思い出',mimeType:'application/vnd.google-apps.folder'});
+    return Response.json({files:[{id:'photo1',name:'a.jpg',mimeType:'image/jpeg'}]});
+  });
+  const result = await source.scan('abcdefghijklmnop');
+  assert.equal(result.photos.length, 1);
+  assert.equal(requests.filter(({url}) => url.searchParams.get('alt') === 'media').length, 0);
+  const controller = new AbortController();
+  const objectURL = await result.photos[0].load(controller.signal);
+  try {
+    assert.ok(objectURL.startsWith('blob:'));
+    assert.equal(requests.filter(({url}) => url.searchParams.get('alt') === 'media').length, 1);
+    assert.ok(requests.every(({options}) => options.cache === 'no-store' && options.headers.Authorization === 'Bearer test-token'));
+    assert.equal(requests.at(-1).options.signal, controller.signal);
+  } finally { URL.revokeObjectURL(objectURL); }
+});
+
 test('Drive folder name search escapes query syntax and follows pagination', async context => {
   const source = new DriveSource(); const queries=[];
   context.mock.method(source,'request',async (path,params)=>{
