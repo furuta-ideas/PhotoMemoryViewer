@@ -1,25 +1,28 @@
-import { DEFAULTS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261007-fill5';
-import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261007-fill5';
-import { VideoPlayer } from './youtube.js?v=20261007-fill5';
-import { GOOGLE_CLIENT_ID } from './deployment-config.js?v=20261007-fill5';
+import { DEFAULTS, DRIVE_ALBUMS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261008-drive6';
+import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261008-drive6';
+import { VideoPlayer } from './youtube.js?v=20261008-drive6';
+import { GOOGLE_CLIENT_ID } from './deployment-config.js?v=20261008-drive6';
 
 const $ = id => document.getElementById(id);
 const STORAGE = 'photo-memory-viewer.settings.v1';
-let settings = { ...DEFAULTS, clientId: GOOGLE_CLIENT_ID, photoFitVersion: 1 };
+const preferFiles = prefersFileSelection(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
+let settings = { ...DEFAULTS, sourceTab: preferFiles ? 'drive' : 'local', clientId: GOOGLE_CLIENT_ID, photoFitVersion: 1, driveUiVersion: 1 };
 try {
   const saved = JSON.parse(localStorage.getItem(STORAGE) || '{}');
   // Apply the new fill mode once to existing installations; later choices remain saved.
-  settings = validateSettings({ ...DEFAULTS, ...saved, fit: saved.photoFitVersion === 1 ? (saved.fit || DEFAULTS.fit) : 'cover', clientId: saved.clientId || GOOGLE_CLIENT_ID, photoFitVersion: 1 });
-} catch { settings = { ...DEFAULTS, clientId: GOOGLE_CLIENT_ID, photoFitVersion: 1 }; }
+  settings = validateSettings({ ...DEFAULTS, ...saved, fit: saved.photoFitVersion === 1 ? (saved.fit || DEFAULTS.fit) : 'cover', clientId: GOOGLE_CLIENT_ID || saved.clientId || '', photoFitVersion: 1,
+    sourceTab: preferFiles && saved.driveUiVersion !== 1 ? 'drive' : (saved.sourceTab || (preferFiles ? 'drive' : 'local')), driveUiVersion: 1,
+    driveAlbums: Array.isArray(saved.driveAlbums) ? saved.driveAlbums.filter(name => DRIVE_ALBUMS.includes(name)) : [...DRIVE_ALBUMS] });
+} catch { settings = { ...DEFAULTS, sourceTab: preferFiles ? 'drive' : 'local', clientId: GOOGLE_CLIENT_ID, photoFitVersion: 1, driveUiVersion: 1 }; }
 let draftLayout = settings.layout;
 let source = null, directory = null, importedFiles = null;
 let importedFileFolder = null, pendingFileFolder = null;
-const preferFiles = prefersFileSelection(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
 let photos = [], videos = [], tiles = [], bag = new ShuffleBag([]);
 let playing = false, epoch = 0, busy = false, sourceKind = '', sourceName = '';
 let video = null, videoAudible = false, currentVideo = null, failedVideos = new Set(), badPhotos = new Set();
 let toastTimer, hideTimer, bgmURL, preparedClient = '', scanController = null;
 let videoRoom = null;
+let drivePreparing = false, loadedDriveAlbums = [];
 const drive = new DriveSource();
 const clock = new RefreshClock(index => updateSlot(index));
 
@@ -34,6 +37,7 @@ function populate() {
   $('bgm-mode').value = settings.bgm; $('bgm-volume').value = settings.bgmVolume;
   $('drive-folder').value = settings.driveFolder; $('client-id').value = settings.clientId;
   $('file-folder-name').value = settings.localFileFolder;
+  document.querySelectorAll('[data-drive-album]').forEach(input => { input.checked = settings.driveAlbums.includes(input.value); });
   chooseLayout(settings.layout); chooseTab(settings.sourceTab); $('bgm-fields').hidden = settings.bgm !== 'local';
 }
 function readSettings() {
@@ -87,6 +91,8 @@ function hasVideoRoom() {
 function setBusy(value) {
   busy = value;
   for (const id of ['choose-folder', 'choose-files', 'find-drive-folder', 'connect-drive', 'reload-source', 'disconnect', 'demo', 'empty-choose', 'apply']) $(id).disabled = value || (['reload-source', 'disconnect'].includes(id) && !source);
+  document.querySelectorAll('[data-drive-album]').forEach(input => { input.disabled = value; });
+  updateDriveButton();
   $('play').disabled = value || !(photos.length || videos.length);
 }
 function progress(count) { $('source-name').textContent = `読み込み中… ${count}件確認`; }
@@ -103,19 +109,23 @@ async function importSource(loader, kind, name) {
   try {
     const result = await loader(scanController.signal);
     source = result; sourceKind = kind; sourceName = result.name || name;
+    loadedDriveAlbums = kind === 'drive' ? (result.driveAlbums || []) : [];
     $('restore-folder')?.remove();
     if (kind !== 'drive') drive.disconnect();
     if (kind !== 'local') { directory = null; importedFiles = null; importedFileFolder = null; await storeHandle(null); }
     showReport(result.report); sourceLabel();
     await rebuild();
     toast(`${sourceName}\n写真${result.photos.length}枚・動画${result.videos.length}件を読み込みました。`);
+    return result;
   } catch (error) {
     sourceLabel(); toast(error.message || '写真の読み込みに失敗しました。');
+    if (kind === 'drive') driveStatus(error.message || '写真の読み込みに失敗しました。', true);
+    return null;
   } finally { scanController = null; setBusy(false); }
 }
 async function pickFolder() {
   if (busy) return;
-  if (preferFiles) { chooseTab('drive'); $('drive-search-name').focus(); toast('Google Driveでアルバムの親フォルダを選びます。「Googleに接続して親フォルダを探す」を押してください。'); return; }
+  if (preferFiles) { chooseTab('drive'); $('drive-albums-connect').focus(); return; }
   if ('showDirectoryPicker' in window) {
     try {
       const handle = await window.showDirectoryPicker({ mode: 'read' });
@@ -336,7 +346,7 @@ $('files-input').addEventListener('change', async () => {
   settings.localFileFolder = folder.folder; persist();
   pendingFileFolder = null; $('files-input').value = '';
 });
-$('empty-choose').addEventListener('click', () => { setPane(true); settings.sourceTab === 'drive' ? $('drive-folder').focus() : pickFolder(); });
+$('empty-choose').addEventListener('click', () => { setPane(true); settings.sourceTab === 'drive' ? $('drive-albums-connect').focus() : pickFolder(); });
 $('folder-input').addEventListener('change', async () => {
   const files = [...$('folder-input').files]; if (!files.length) return;
   const name = files[0].webkitRelativePath.split('/')[0] || '選択した写真';
@@ -345,15 +355,94 @@ $('folder-input').addEventListener('change', async () => {
 });
 async function prepareDrive() {
   const clientId = $('client-id').value.trim(); if (!clientId || (clientId === preparedClient && drive.client)) return;
-  await drive.prepare(clientId); preparedClient = clientId;
-  $('connect-drive').textContent = 'Googleに接続して読み込む ↗';
+  drivePreparing = true; updateDriveButton();
+  try {
+    await drive.prepare(clientId); preparedClient = clientId;
+    $('connect-drive').textContent = 'Googleに接続して読み込む ↗';
+    driveStatus('アルバムを選び、「Googleに接続して写真を表示」を押してください。');
+  } finally { drivePreparing = false; updateDriveButton(); }
 }
 function driveStatus(message, error = false) {
   $('drive-status').textContent = message;
   $('drive-status').classList.toggle('form-error', error);
   $('drive-status').hidden = false;
 }
-$('client-id').addEventListener('change', () => { preparedClient = ''; prepareDrive().catch(error => toast(error.message)); });
+function updateDriveButton() {
+  const configured = !!$('client-id').value.trim();
+  $('drive-albums-connect').disabled = busy || drivePreparing || !configured || !settings.driveAlbums.length;
+  $('drive-albums-connect').textContent = drivePreparing ? 'Google接続を準備中…' : 'Googleに接続して写真を表示';
+}
+function driveReady() {
+  if (!$('client-id').value.trim()) { driveStatus('Google接続は管理者の初期設定待ちです。アルバムの選択は保存されています。接続設定が完了すると、このボタンから利用できます。', true); return false; }
+  if (drivePreparing) return false;
+  if (preparedClient !== $('client-id').value.trim() || !drive.client) {
+    prepareDrive().then(() => driveStatus('準備できました。「Googleに接続して写真を表示」を押してください。')).catch(error => driveStatus(error.message, true)); return false;
+  }
+  return true;
+}
+async function loadDriveAlbums(roots) {
+  if (busy || !driveReady()) return;
+  // Open Google directly from the user gesture when reconnecting an expired token.
+  const authorization = drive.token && Date.now() < drive.expires ? Promise.resolve() : drive.authorize();
+  const result = await importSource(async signal => {
+    await authorization;
+    const merged = { photos: [], videos: [], report: { skipped: 0, messages: [] }, name: roots.map(root => root.name).join(' / '), driveAlbums: roots };
+    for (const root of roots) {
+      driveStatus(`${root.name} の写真を読み込んでいます…`);
+      const album = await drive.scan(root.id, progress, signal);
+      merged.photos.push(...album.photos); merged.videos.push(...album.videos);
+      merged.report.skipped += album.report.skipped; merged.report.messages.push(...album.report.messages);
+    }
+    merged.photos = [...new Map(merged.photos.map(item => [item.id, item])).values()];
+    merged.videos = [...new Map(merged.videos.map(item => [item.id, item])).values()];
+    merged.report.messages = merged.report.messages.slice(0, 50);
+    return merged;
+  }, 'drive', roots.map(root => root.name).join(' / '));
+  if (result) {
+    settings.driveResolvedAlbums = roots; settings.clientId = $('client-id').value.trim(); persist();
+    $('drive-folder-results').hidden = true;
+    driveStatus(`読み込み完了：写真${result.photos.length}枚・動画${result.videos.length}件。Playを押してください。`);
+  }
+}
+function showAlbumMatches(groups) {
+  const results = $('drive-folder-results'); results.replaceChildren();
+  const selects = groups.map((group, index) => {
+    const label = document.createElement('label'); label.textContent = group.name;
+    const select = document.createElement('select'); select.id = `album-match-${index}`; label.htmlFor = select.id;
+    if (group.matches.length > 1) select.add(new Option('同名のフォルダから選んでください', ''));
+    for (const folder of group.matches) select.add(new Option(`${folder.name}（ID：${folder.id}）`, folder.id));
+    results.append(label, select); return select;
+  });
+  const confirm = document.createElement('button'); confirm.type = 'button'; confirm.className = 'folder-button'; confirm.textContent = '選んだフォルダの写真を表示';
+  confirm.addEventListener('click', () => {
+    const roots = groups.map((group, index) => group.matches.find(folder => folder.id === selects[index].value));
+    if (roots.some(root => !root)) { driveStatus('同名のフォルダを選択してください。', true); return; }
+    void loadDriveAlbums(roots);
+  });
+  results.append(confirm); results.hidden = false;
+  driveStatus('同じ名前のフォルダが複数あります。読み込むフォルダを選択してください。');
+}
+document.querySelectorAll('[data-drive-album]').forEach(input => input.addEventListener('change', () => {
+  settings.driveAlbums = [...document.querySelectorAll('[data-drive-album]:checked')].map(input => input.value);
+  persist(); $('drive-folder-results').hidden = true; updateDriveButton();
+  if (!settings.driveAlbums.length) driveStatus('表示するアルバムを1つ以上選んでください。');
+}));
+$('drive-albums-connect').addEventListener('click', async () => {
+  if (busy || !driveReady() || !settings.driveAlbums.length) return;
+  const authorization = drive.token && Date.now() < drive.expires ? Promise.resolve() : drive.authorize();
+  setBusy(true); $('drive-folder-results').hidden = true; driveStatus('Googleに接続し、選んだアルバムを探しています…');
+  try {
+    await authorization;
+    const groups = await Promise.all(settings.driveAlbums.map(async name => ({ name, matches: await drive.findFolders(name, undefined, true) })));
+    const missing = groups.filter(group => !group.matches.length);
+    if (missing.length) throw new Error(`見つからないアルバム：${missing.map(group => group.name).join('、')}。Googleで選んだアカウントと、マイドライブ内のフォルダ名をご確認ください。`);
+    setBusy(false);
+    if (groups.some(group => group.matches.length > 1)) showAlbumMatches(groups);
+    else await loadDriveAlbums(groups.map(group => group.matches[0]));
+  } catch (error) { driveStatus(error.message, true); }
+  finally { setBusy(false); }
+});
+$('client-id').addEventListener('change', () => { preparedClient = ''; updateDriveButton(); prepareDrive().catch(error => driveStatus(error.message, true)); });
 $('find-drive-folder').addEventListener('click', async () => {
   if (busy) return;
   const results = $('drive-folder-results');
@@ -377,8 +466,8 @@ $('find-drive-folder').addEventListener('click', async () => {
       button.addEventListener('click', async () => {
         if (busy) return;
         $('drive-folder').value = folder.id;
-        await importSource(signal => drive.scan(folder.id, progress, signal), 'drive', folder.name);
-        if (sourceKind === 'drive' && sourceName === folder.name) {
+        const result = await importSource(signal => drive.scan(folder.id, progress, signal), 'drive', folder.name);
+        if (result) {
           settings.driveFolder = folder.id; settings.clientId = $('client-id').value.trim(); persist(); results.hidden = true;
         }
       });
@@ -400,11 +489,12 @@ $('connect-drive').addEventListener('click', async () => {
     }
     // Call the popup directly from the click handler, before any asynchronous work.
     const authorization = drive.authorize();
-    await importSource(async signal => { await authorization; return drive.scan(folderValue, progress, signal); }, 'drive', 'Google Drive');
-    settings.driveFolder = folderValue; settings.clientId = $('client-id').value.trim(); persist();
+    const result = await importSource(async signal => { await authorization; return drive.scan(folderValue, progress, signal); }, 'drive', 'Google Drive');
+    if (result) { settings.driveFolder = folderValue; settings.clientId = $('client-id').value.trim(); persist(); }
   } catch (error) { $('drive-setup').open = true; toast(error.message); }
 });
 $('reload-source').addEventListener('click', async () => {
+  if (sourceKind === 'drive' && loadedDriveAlbums.length) { await loadDriveAlbums(loadedDriveAlbums); return; }
   if (sourceKind === 'drive') { $('connect-drive').click(); return; }
   if (sourceKind === 'demo') { await importSource(async () => demoSource(), 'demo', 'サンプル'); return; }
   if (directory) {
@@ -416,6 +506,7 @@ $('disconnect').addEventListener('click', async () => {
   setBusy(true);
   stop(); drive.disconnect(); preparedClient = ''; source = null; sourceKind = ''; directory = null; importedFiles = null; sourceName = '';
   importedFileFolder = null; pendingFileFolder = null;
+  loadedDriveAlbums = [];
   $('restore-folder')?.remove();
   await storeHandle(null); sourceLabel(); showReport({ skipped: 0, messages: [] }); await rebuild(); setBusy(false); toast('接続を解除しました。');
 });
@@ -448,10 +539,11 @@ new ResizeObserver(resizeGrid).observe($('viewer'));
 populate(); persist(); showPlayback(); resizeGrid();
 if (preferFiles) {
   $('folder-button-label').textContent = 'Google Driveの親フォルダを選択';
-  $('local-picker-hint').textContent = 'iPad・iPhoneでアルバム全体を読む場合はGoogle Drive接続を使います。「B.01 じいじの思い出アルバム」を選ぶと配下の日付付きフォルダをまとめて読み込みます。下の写真選択は1フォルダだけの補助機能です。';
+  $('local-picker-hint').textContent = 'iPad・iPhoneではGoogle Driveを選び、登録済みのアルバムにチェックを入れて接続してください。下の写真選択は1フォルダだけの補助機能です。';
 }
+updateDriveButton();
 if (settings.clientId) prepareDrive().catch(error => driveStatus(error.message, true));
-else driveStatus('Google接続の初期設定が未完了です。検索を利用するには、アプリ管理者による接続設定が必要です。', true);
+else driveStatus('Google接続は管理者の初期設定待ちです。2つのアルバムは登録済みです。接続設定が完了すると、このボタンから利用できます。', true);
 restoreHandle().then(handle => {
   if (!source && !busy && handle) {
     directory = handle;

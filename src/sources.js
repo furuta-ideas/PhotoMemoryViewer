@@ -1,4 +1,4 @@
-import { datedFolder, nearestFolder, youtubeLinks, driveFolderId } from './core.js?v=20261007-fill5';
+import { datedFolder, nearestFolder, youtubeLinks, driveFolderId } from './core.js?v=20261008-drive6';
 const IMAGE = /\.(jpe?g|png|webp|gif)$/i;
 const LINK = /\.(txt|url)$/i;
 const SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
@@ -114,7 +114,7 @@ export class DriveSource {
       try { response = await fetch(url, { headers: { Authorization: `Bearer ${this.token}` }, signal }); }
       catch (error) { if (error.name === 'AbortError') throw error; throw Object.assign(new Error('ネットワークに接続できません。接続を確認してPlayまたは再読み込みを押してください。'), { code: 'NETWORK' }); }
       if (response.ok) return blob ? response.blob() : response.json();
-      if (response.status === 401) throw Object.assign(new Error('Googleに再接続してください。'), { code: 'AUTH' });
+      if (response.status === 401) { this.token = null; this.expires = 0; throw Object.assign(new Error('Googleに再接続してください。'), { code: 'AUTH' }); }
       const body = await response.json().catch(() => ({}));
       const rateLimit = response.status === 429 || response.status >= 500 || body.error?.errors?.some(e => /rateLimitExceeded|userRateLimitExceeded/.test(e.reason));
       if (rateLimit && attempt < 3) { await new Promise(resolve => setTimeout(resolve, 1000 * 2 ** attempt)); continue; }
@@ -123,12 +123,12 @@ export class DriveSource {
       throw Object.assign(new Error('Google Driveの読み込みに失敗しました。しばらくして再試行してください。'), { code: 'NETWORK' });
     }
   }
-  async findFolders(name, signal) {
+  async findFolders(name, signal, exact = false) {
     const escaped = name.trim().replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     if (!escaped) throw new Error('親フォルダの名前を入力してください。');
     const folders = []; let pageToken = '';
     do {
-      const params = { q: `trashed = false and mimeType = 'application/vnd.google-apps.folder' and name contains '${escaped}'`, fields: 'nextPageToken,files(id,name)', pageSize: '1000', orderBy: 'name' };
+      const params = { q: `trashed = false and mimeType = 'application/vnd.google-apps.folder' and name ${exact ? '=' : 'contains'} '${escaped}'`, fields: 'nextPageToken,files(id,name)', pageSize: '1000', orderBy: 'name' };
       if (pageToken) params.pageToken = pageToken;
       const page = await this.request('files', params, signal);
       folders.push(...(page.files || [])); pageToken = page.nextPageToken;

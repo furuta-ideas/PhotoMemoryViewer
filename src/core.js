@@ -1,4 +1,5 @@
-export const DEFAULTS = Object.freeze({ start: '', end: '', layout: 4, refresh: 15, effect: 'smooth', fit: 'cover', youtube: true, sound: true, volume: 70, bgm: 'off', bgmVolume: 40, sourceTab: 'local', driveFolder: '', clientId: '', localFileFolder: '' });
+export const DRIVE_ALBUMS = Object.freeze(['①古田家の思い出アルバム', '②じいじの思い出アルバム']);
+export const DEFAULTS = Object.freeze({ start: '', end: '', layout: 4, refresh: 15, effect: 'smooth', fit: 'cover', youtube: true, sound: true, volume: 70, bgm: 'off', bgmVolume: 40, sourceTab: 'local', driveFolder: '', clientId: '', localFileFolder: '', driveAlbums: DRIVE_ALBUMS });
 
 export function prefersFileSelection(userAgent, platform, touchPoints) {
   return /iPad|iPhone|iPod/i.test(userAgent) || (platform === 'MacIntel' && touchPoints > 1);
