@@ -10,6 +10,8 @@ let browser;
   const output = path.resolve(process.env.PHOTO_MEMORY_SCREENSHOTS || 'test-results');
   await fs.mkdir(output, { recursive: true });
   browser = await chromium.launchPersistentContext(path.join(temp, 'photo-memory-browser-' + Date.now()), { headless: true, executablePath: process.env.PLAYWRIGHT_BROWSER_PATH || undefined, viewport: { width: 1440, height: 1000 }, env: { ...process.env, TEMP: temp, TMP: temp } });
+  // Keep mocked Google tests independent of the production deployment's client ID.
+  await browser.route('**/src/deployment-config.js*', route => route.fulfill({ contentType: 'text/javascript', body: "export const GOOGLE_CLIENT_ID = '';" }));
   const page = await browser.newPage();
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(process.env.PHOTO_MEMORY_URL || 'http://localhost:5502');

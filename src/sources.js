@@ -1,4 +1,4 @@
-import { datedFolder, nearestFolder, youtubeLinks, driveFolderId } from './core.js?v=20261008-drive6';
+import { datedFolder, nearestFolder, youtubeLinks, driveFolderId } from './core.js?v=20261008-google7';
 const IMAGE = /\.(jpe?g|png|webp|gif)$/i;
 const LINK = /\.(txt|url)$/i;
 const SCOPE = 'https://www.googleapis.com/auth/drive.readonly';

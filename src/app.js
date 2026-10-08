@@ -1,7 +1,7 @@
-import { DEFAULTS, DRIVE_ALBUMS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261008-drive6';
-import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261008-drive6';
-import { VideoPlayer } from './youtube.js?v=20261008-drive6';
-import { GOOGLE_CLIENT_ID } from './deployment-config.js?v=20261008-drive6';
+import { DEFAULTS, DRIVE_ALBUMS, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261008-google7';
+import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261008-google7';
+import { VideoPlayer } from './youtube.js?v=20261008-google7';
+import { GOOGLE_CLIENT_ID } from './deployment-config.js?v=20261008-google7';
 
 const $ = id => document.getElementById(id);
 const STORAGE = 'photo-memory-viewer.settings.v1';
