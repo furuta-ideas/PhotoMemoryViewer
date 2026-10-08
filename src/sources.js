@@ -1,6 +1,6 @@
-import { datedFolder, nearestFolder, youtubeLinks, driveFolderId } from './core.js?v=20261008-start9';
+import { datedFolder, nearestFolder, youtubeLinks, driveFolderId } from './core.js?v=20261008-media10';
 const IMAGE = /\.(jpe?g|png|webp|gif)$/i;
-const LINK = /\.(txt|url)$/i;
+const LINK = /\.(txt|url|webloc)$/i;
 const SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
 export const DRIVE_SESSION = 'photo-memory-viewer.drive-session.v1';
 export const issues = () => ({ skipped: 0, messages: [] });
@@ -144,7 +144,7 @@ export class DriveSource {
       let response;
       // Display on demand without retaining Drive responses in the browser HTTP cache.
       try { response = await fetch(url, { cache: 'no-store', headers: { Authorization: `Bearer ${this.token}` }, signal }); }
-      catch (error) { if (error.name === 'AbortError') throw error; throw Object.assign(new Error('ネットワークに接続できません。接続を確認してPlayまたは再読み込みを押してください。'), { code: 'NETWORK' }); }
+      catch (error) { if (error.name === 'AbortError') throw error; throw Object.assign(new Error('ネットワークに接続できません。接続を確認して停止／再開または再読み込みを押してください。'), { code: 'NETWORK' }); }
       if (response.ok) return blob ? response.blob() : response.json();
       if (response.status === 401) { this.clearSession(); throw Object.assign(new Error('Googleに再接続してください。'), { code: 'AUTH' }); }
       const body = await response.json().catch(() => ({}));
@@ -168,44 +168,78 @@ export class DriveSource {
     return folders;
   }
   async scan(value, onProgress = () => {}, signal, onBatch = () => {}) {
-    const id = driveFolderId(value);
-    const root = await this.request(`files/${id}`, { fields: 'id,name,mimeType' }, signal);
-    if (root.mimeType !== 'application/vnd.google-apps.folder') throw new Error('写真の入ったフォルダを指定してください。');
-    const result = { photos: [], videos: [], report: issues(), name: root.name };
-    onBatch({photos:[],videos:[],name:root.name});
-    let done = 0;
-    const links = [];
-    const visited = new Set();
-    const walk = async (dir, inherited) => {
-      signal?.throwIfAborted();
-      if (visited.has(dir.id)) return; visited.add(dir.id);
-      const folder = datedFolder(dir.name) || inherited;
-      let pageToken = '';
-      do {
-        const params = { q: `'${dir.id}' in parents and trashed = false`, fields: 'nextPageToken,files(id,name,mimeType)', pageSize: '1000' };
-        if (pageToken) params.pageToken = pageToken;
-        const page = await this.request('files', params, signal);
-        const directories = [], firstPhoto = result.photos.length;
-        for (const entry of page.files || []) {
-          if (entry.mimeType === 'application/vnd.google-apps.folder') directories.push(entry);
-          else if (LINK.test(entry.name)) links.push({entry,folder});
-          else await collectFile(entry.name, entry.id, folder, s => this.request(`files/${entry.id}`, { alt: 'media' }, s || signal, true), result);
-          onProgress(++done);
-        }
-        // Publish photos before visiting slower descendants or reading YouTube link files.
-        if (result.photos.length > firstPhoto) onBatch({photos:result.photos.slice(firstPhoto),videos:[]});
-        for (const child of directories) await walk(child, folder);
-        pageToken = page.nextPageToken;
-      } while (pageToken);
-    };
-    await walk(root, null);
-    for (const {entry,folder} of links) {
-      signal?.throwIfAborted();
-      const firstVideo = result.videos.length;
-      await collectFile(entry.name, entry.id, folder, s => this.request(`files/${entry.id}`, { alt: 'media' }, s || signal, true), result);
-      if (result.videos.length > firstVideo) onBatch({photos:[],videos:result.videos.slice(firstVideo)});
+    const parentSignal = signal, controller = new AbortController();
+    const abort = () => controller.abort(parentSignal.reason);
+    if (parentSignal?.aborted) abort(); else parentSignal?.addEventListener('abort', abort, {once:true});
+    signal = controller.signal;
+    let active = true, linkError, nextWorker = 0;
+    const linkWorkers = [Promise.resolve(), Promise.resolve()];
+    const emit = batch => { if (active && !signal.aborted) onBatch(batch); };
+    try {
+      signal.throwIfAborted();
+      const id = driveFolderId(value);
+      const root = await this.request(`files/${id}`, { fields: 'id,name,mimeType' }, signal);
+      if (root.mimeType !== 'application/vnd.google-apps.folder') throw new Error('写真の入ったフォルダを指定してください。');
+      const result = { photos: [], videos: [], report: issues(), name: root.name };
+      emit({photos:[],videos:[],name:root.name});
+      let done = 0;
+      const queueLink = (entry, folder) => {
+        // A slow shortcut download must not hold up the remaining photo metadata.
+        const slot = nextWorker++ % linkWorkers.length;
+        linkWorkers[slot] = linkWorkers[slot].then(async () => {
+          if (!active || linkError) return;
+          signal.throwIfAborted();
+          const batch = {photos:[],videos:[],report:issues()};
+          await collectFile(entry.name, entry.id, folder, s => this.request(`files/${entry.id}`, {alt:'media'}, s || signal, true), batch);
+          result.report.skipped += batch.report.skipped;
+          result.report.messages.push(...batch.report.messages.slice(0, Math.max(0, 50 - result.report.messages.length)));
+          if (batch.videos.length) { result.videos.push(...batch.videos); emit({photos:[],videos:batch.videos}); }
+        }).catch(error => { linkError ||= error; controller.abort(error); });
+      };
+      const visited = new Set();
+      const walk = async (dir, inherited) => {
+        signal?.throwIfAborted();
+        if (linkError) throw linkError;
+        if (visited.has(dir.id)) return; visited.add(dir.id);
+        const folder = datedFolder(dir.name) || inherited;
+        let pageToken = '';
+        do {
+          const params = { q: `'${dir.id}' in parents and trashed = false`, fields: 'nextPageToken,files(id,name,mimeType,shortcutDetails)', pageSize: '1000' };
+          if (pageToken) params.pageToken = pageToken;
+          const page = await this.request('files', params, signal);
+          const directories = [], firstPhoto = result.photos.length;
+          const pageLinks = [];
+          for (let entry of page.files || []) {
+            if (entry.mimeType === 'application/vnd.google-apps.shortcut') {
+              const targetId = entry.shortcutDetails?.targetId;
+              if (!targetId) { skip(result.report, `${entry.name}：ショートカットの参照先がありません`); continue; }
+              try { entry = await this.request(`files/${encodeURIComponent(targetId)}`, {fields:'id,name,mimeType'}, signal); }
+              catch (error) {
+                if (['AUTH','NETWORK','SOURCE'].includes(error.code) || error.name === 'AbortError') throw error;
+                skip(result.report, `${entry.name}：ショートカットの参照先を読み込めません`); continue;
+              }
+            }
+            if (entry.mimeType === 'application/vnd.google-apps.folder') directories.push(entry);
+            else if (LINK.test(entry.name)) pageLinks.push(entry);
+            else await collectFile(entry.name, entry.id, folder, s => this.request(`files/${entry.id}`, { alt: 'media' }, s, true), result);
+            onProgress(++done);
+          }
+          // Publish photos immediately, then resolve discovered shortcuts with priority.
+          if (result.photos.length > firstPhoto) emit({photos:result.photos.slice(firstPhoto),videos:[]});
+          for (const entry of pageLinks) queueLink(entry, folder);
+          for (const child of directories) await walk(child, folder);
+          pageToken = page.nextPageToken;
+        } while (pageToken);
+      };
+      await walk(root, null);
+      await Promise.all(linkWorkers);
+      if (linkError) throw linkError;
+      return result;
+    } catch (error) { throw linkError || error; }
+    finally {
+      active = false; controller.abort(); parentSignal?.removeEventListener('abort', abort);
+      await Promise.allSettled(linkWorkers);
     }
-    return result;
   }
   disconnect() {
     if (this.token && window.google?.accounts?.oauth2) window.google.accounts.oauth2.revoke(this.token, () => {});

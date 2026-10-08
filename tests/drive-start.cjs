@@ -4,10 +4,13 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 let browser;
+const settle = async page => { await page.waitForTimeout(250); await page.waitForFunction(() => !document.getElementById('choose-folder').disabled); };
+const pause = async page => { if ((await page.locator('#play-state').innerText()) === '再生中') await page.click('#stop'); };
 (async () => {
   const temp=path.resolve(process.env.PHOTO_MEMORY_TEST_DIR||os.tmpdir()),output=path.resolve(process.env.PHOTO_MEMORY_SCREENSHOTS||'test-results');
   await fs.mkdir(output,{recursive:true});
   browser=await chromium.launchPersistentContext(path.join(temp,'photo-memory-start-'+Date.now()),{headless:true,executablePath:process.env.PLAYWRIGHT_BROWSER_PATH||undefined,viewport:{width:768,height:1024},env:{...process.env,TEMP:temp,TMP:temp}});
+  await browser.route('**/src/faces.js*', route => route.fulfill({ contentType: 'text/javascript', body: 'export const faceFilter = { check: async()=>true, clear(){} };' }));
   await browser.addInitScript(()=>{Object.defineProperty(navigator,'platform',{get:()=> 'MacIntel'});Object.defineProperty(navigator,'maxTouchPoints',{get:()=>5});});
   await browser.route('**/src/deployment-config.js*',r=>r.fulfill({contentType:'text/javascript',body:"export const GOOGLE_CLIENT_ID = 'mock-client.apps.googleusercontent.com';"}));
   await browser.route('https://accounts.google.com/gsi/client',r=>r.fulfill({contentType:'text/javascript',body:`
@@ -39,15 +42,15 @@ let browser;
     return r.fulfill({contentType:'application/json',body:JSON.stringify(data)});
   });
   const url=process.env.PHOTO_MEMORY_URL||'http://localhost:5502';
-  const idle=()=>page.waitForFunction(()=>!document.getElementById('apply').disabled);
+  const idle=()=>page.waitForFunction(()=>!document.getElementById('choose-folder').disabled);
   const visible=()=>page.waitForFunction(()=>document.querySelector('.memory-tile img')?.complete&&document.querySelector('.memory-tile img')?.naturalWidth>0);
   await page.goto(url);await page.waitForFunction(()=>!document.getElementById('drive-albums-connect').disabled);
   await page.locator('[data-drive-album][value="②じいじの思い出アルバム"]').uncheck();
   hold();await page.click('#drive-albums-connect');await visible();
-  assert.equal(await page.locator('#apply').isDisabled(),true);assert.equal(await page.locator('#play-state').innerText(),'再生中');
+  assert.equal(await page.locator('#choose-folder').isDisabled(),true);assert.equal(await page.locator('#play-state').innerText(),'再生中');
   await page.evaluate(()=>{window.__firstPhoto=document.querySelector('.memory-tile img');});
   await page.screenshot({path:path.join(output,'PhotoMemoryViewer-progressive-ipad.png')});
-  await page.click('#stop');release();await idle();
+  await pause(page);release();await idle();
   assert.equal(await page.locator('#play-state').innerText(),'停止中');assert.equal(await page.locator('#viewer-count').innerText(),'3 PHOTOS / 0 VIDEOS');
   assert.equal(await page.evaluate(()=>window.__firstPhoto===document.querySelector('.memory-tile img')),true);
   assert.equal(await page.evaluate(()=>Object.values(localStorage).some(value=>value.includes('private-session-token'))),false);
@@ -58,13 +61,13 @@ let browser;
 
   const beforeSearch=searches,beforeScans=scans;
   rootGate=new Promise(resolve=>{releaseRoot=resolve;});
-  await page.reload();await visible();assert.equal(await page.locator('#apply').isDisabled(),true);
+  await page.reload();await visible();assert.equal(await page.locator('#choose-folder').isDisabled(),true);
   releaseRoot();rootGate=null;await idle();
   assert.equal(await page.evaluate(()=>window.__authCalls),0);assert.equal(searches,beforeSearch);assert.ok(scans>beforeScans);
   assert.equal(await page.locator('#play-state').innerText(),'再生中');assert.equal(await page.locator('#settings').isHidden(),true);
   console.log('PASS same-tab startup uses saved root and valid tab session without OAuth popup or name search');
 
-  await page.click('#settings-toggle');await page.click('#stop');
+  await page.click('#settings-toggle');await pause(page);
   await page.evaluate(()=>{const key='photo-memory-viewer.drive-session.v1';const value=JSON.parse(sessionStorage.getItem(key));value.expires=Date.now()-1;sessionStorage.setItem(key,JSON.stringify(value));});
   await page.reload();await page.waitForFunction(()=>!document.getElementById('drive-albums-connect').disabled);
   assert.equal(await page.evaluate(()=>window.__authCalls),0);assert.equal(await page.evaluate(()=>sessionStorage.getItem('photo-memory-viewer.drive-session.v1')),null);
@@ -74,22 +77,22 @@ let browser;
   assert.equal(await page.locator('#play-state').innerText(),'再生中');
   console.log('PASS expired session offers one-tap reconnect to exact remembered root and autoplays');
 
-  unauthorized=true;await page.reload();await page.waitForFunction(()=>!document.getElementById('apply').disabled&&!document.getElementById('drive-albums-connect').disabled);
+  unauthorized=true;await page.reload();await page.waitForFunction(()=>!document.getElementById('choose-folder').disabled&&!document.getElementById('drive-albums-connect').disabled);
   assert.equal(await page.evaluate(()=>sessionStorage.getItem('photo-memory-viewer.drive-session.v1')),null);
   assert.match(await page.locator('#drive-albums-connect').innerText(),/前回/);
   unauthorized=false;await page.click('#drive-albums-connect');await visible();await idle();
   assert.equal(await page.locator('#play-state').innerText(),'再生中');assert.equal(searches,beforeSearch);
   console.log('PASS revoked session is discarded and remembered custom location remains reconnectable');
 
-  await page.click('#stop');failTail=true;hold();await page.click('#reload-source');await visible();release();await idle();
+  await pause(page);failTail=true;hold();await page.click('#reload-source');await visible();release();await idle();
   assert.equal(await page.locator('.memory-tile img').count(),4);assert.match(await page.locator('#drive-status').innerText(),/API|権限/);
   failTail=false;await page.click('#reload-source');await idle();
   assert.equal(await page.locator('#viewer-count').innerText(),'3 PHOTOS / 0 VIDEOS');
   console.log('PASS partial scan failure preserves preview; retry succeeds');
 
-  await page.fill('#start-date','20210203');await page.fill('#end-date','20210203');await page.click('#apply');await idle();
+  await page.fill('#start-date','20210203');await page.fill('#end-date','20210203');await settle(page);await idle();
   hold();await page.click('#reload-source');
-  await page.waitForFunction(()=>document.getElementById('apply').disabled);
+  await page.waitForFunction(()=>document.getElementById('choose-folder').disabled);
   await page.waitForTimeout(100);release();await idle();await visible();
   assert.equal(await page.locator('#viewer-count').innerText(),'1 PHOTOS / 0 VIDEOS');assert.equal(await page.locator('#folder-caption').innerText(),'20210203 散歩');
   assert.equal(await page.locator('#play-state').innerText(),'再生中');

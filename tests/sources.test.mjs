@@ -109,7 +109,7 @@ test('Drive restores only matching unexpired tab sessions and clears revoked tok
   storage.setItem(DRIVE_SESSION,'not-json');assert.equal(source.restoreSession(clientId),false);
 });
 
-test('Drive publishes photos before delayed descendants and before YouTube link downloads', async context => {
+test('Drive publishes photos immediately and prioritizes discovered YouTube links before delayed descendants', async context => {
   const source = new DriveSource(null), batches = [], events = [];
   let release; const gate = new Promise(resolve=>{release=resolve;});
   let first; const found = new Promise(resolve=>{first=resolve;});
@@ -122,11 +122,30 @@ test('Drive publishes photos before delayed descendants and before YouTube link 
   let completed = false;
   const scan = source.scan('abcdefghijklmnop',()=>{},undefined,batch=>{batches.push(batch);if(batch.photos.length){events.push(batch.photos[0].id);first();}}).then(result=>{completed=true;return result;});
   await found;
-  assert.equal(completed,false);assert.equal(events[0],'early');assert.equal(events.includes('link'),false);
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(completed,false);assert.equal(events[0],'early');assert.equal(events.includes('link'),true);
+  assert.equal(batches.some(batch=>batch.videos.length===1),true);
   release();const result=await scan;
   assert.deepEqual(result.photos.map(photo=>photo.id),['early','later']);
-  assert.equal(result.videos.length,1);assert.deepEqual(events,['early','later','link']);
+  assert.equal(result.videos.length,1);assert.deepEqual(events,['early','link','later']);
   assert.equal(batches[0].name,'20200101 アルバム');
+});
+
+test('slow shortcut bodies do not block later photos; Drive shortcuts and Apple webloc resolve', async context => {
+  const source = new DriveSource(null), batches = [];
+  let release; const gate = new Promise(resolve=>{release=resolve;});
+  let photo; const found = new Promise(resolve=>{photo=resolve;});
+  context.mock.method(source,'request',async(path,params)=>{
+    if (path==='files/abcdefghijklmnop') return {id:'abcdefghijklmnop',name:'20200101 家族',mimeType:'application/vnd.google-apps.folder'};
+    if (path==='files/targetlink') return params.alt==='media' ? (await gate,new Blob(['<plist><dict><key>URL</key><string>https://youtu.be/dQw4w9WgXcQ</string></dict></plist>'])) : {id:'targetlink',name:'movie.webloc'};
+    if (params.q.includes('child')) return {files:[{id:'later',name:'portrait.jpg'}]};
+    return {files:[{id:'shortcut',name:'YouTube',mimeType:'application/vnd.google-apps.shortcut',shortcutDetails:{targetId:'targetlink'}},{id:'child',name:'child',mimeType:'application/vnd.google-apps.folder'}]};
+  });
+  let done=false;
+  const scan=source.scan('abcdefghijklmnop',()=>{},undefined,batch=>{batches.push(batch);if(batch.photos.length)photo();}).then(result=>{done=true;return result;});
+  await found;assert.equal(done,false);assert.equal(batches.some(batch=>batch.videos.length),false);
+  release();const result=await scan;
+  assert.equal(result.videos[0].videoId,'dQw4w9WgXcQ');assert.equal(result.videos[0].folder,'20200101 家族');
 });
 
 test('Drive quick-start metadata is bounded, validated and still loads online on demand', async context => {
@@ -137,4 +156,34 @@ test('Drive quick-start metadata is bounded, validated and still loads online on
   let requests=0;
   context.mock.method(source,'request',async(path,params)=>{requests++;assert.equal(path,'files/photo0');assert.equal(params.alt,'media');return new Blob(['image']);});
   assert.equal(requests,0);const url=await restored[0].load();assert.equal(requests,1);URL.revokeObjectURL(url);
+});
+
+test('priority link queue drains every page and limits concurrent downloads to two', async context => {
+  const source=new DriveSource(null);let active=0,max=0;const downloaded=[];
+  context.mock.method(source,'request',async(path,params)=>{
+    if(path==='files/abcdefghijklmnop')return {id:'abcdefghijklmnop',name:'20200101 家族',mimeType:'application/vnd.google-apps.folder'};
+    if(params.alt==='media'){
+      max=Math.max(max,++active);await new Promise(resolve=>setTimeout(resolve,1));active--;downloaded.push(path);
+      return new Blob(['https://youtu.be/dQw4w9WgXcQ']);
+    }
+    const page=Number(params.pageToken||0);return {nextPageToken:page<4?String(page+1):undefined,files:[{id:'link'+page,name:'video.url'}]};
+  });
+  const result=await source.scan('abcdefghijklmnop');assert.equal(result.videos.length,5);
+  assert.equal(downloaded.length,5);assert.ok(max<=2);
+});
+
+test('failed metadata scan aborts pending links and never emits a stale batch', async context => {
+  const source=new DriveSource(null), batches=[];let aborted=false;
+  context.mock.method(source,'request',async(path,params,signal)=>{
+    if(path==='files/abcdefghijklmnop')return {id:'abcdefghijklmnop',name:'20200101 家族',mimeType:'application/vnd.google-apps.folder'};
+    if(params.alt==='media')return new Promise((resolve,reject)=>{
+      const abort=()=>{aborted=true;reject(new DOMException('Aborted','AbortError'));};
+      if(signal.aborted)abort();else signal.addEventListener('abort',abort,{once:true});
+    });
+    if(params.q.includes('slow'))throw Object.assign(new Error('metadata failed'),{code:'NETWORK'});
+    return {files:[{id:'link',name:'video.url'},{id:'slow',name:'child',mimeType:'application/vnd.google-apps.folder'}]};
+  });
+  await assert.rejects(source.scan('abcdefghijklmnop',()=>{},undefined,batch=>batches.push(batch)),/metadata failed/);
+  assert.equal(aborted,true);assert.equal(batches.some(batch=>batch.videos.length),false);
+  const count=batches.length;await new Promise(resolve=>setTimeout(resolve,10));assert.equal(batches.length,count);
 });

@@ -1,4 +1,4 @@
-import { randomSeek } from './core.js?v=20261008-start9';
+import { randomSeek } from './core.js?v=20261008-media10';
 let apiPromise;
 function youtubeAPI() {
   if (window.YT?.Player) return Promise.resolve(window.YT);
@@ -27,7 +27,7 @@ export class VideoPlayer {
           if (!this.alive) return;
           this.onAudible(event.data === YT.PlayerState.PLAYING && this.settings.sound && this.settings.volume > 0);
           if (event.data === YT.PlayerState.PLAYING && !this.running) { this.player.pauseVideo(); return; }
-          if (this.running && event.data === YT.PlayerState.PLAYING && this.pendingSeek) { this.pendingSeek = false; this.seek(); }
+          if (this.running && event.data === YT.PlayerState.PLAYING && this.pendingSeek) this.initialSeek();
           if (this.running && event.data === YT.PlayerState.ENDED) { this.seek(); this.player.playVideo(); }
         },
         onError: () => { if (this.alive) this.onError(); },
@@ -40,13 +40,18 @@ export class VideoPlayer {
     this.settings.sound ? this.player.unMute() : this.player.mute();
     this.player.setVolume(this.settings.volume);
   }
-  play() { this.running = true; if (this.ready) { this.applySound(); this.player.playVideo(); } }
-  pause() { this.running = false; this.onAudible(false); if (this.ready) this.player.pauseVideo(); }
-  seek() {
-    if (!this.ready) return;
-    const point = randomSeek(this.player.getDuration(), this.settings.refresh, this.previous);
-    if (point === null) { this.pendingSeek = true; return; }
-    this.previous = point; this.player.seekTo(point, true);
+  play() { this.running = true; if (this.ready) { this.applySound(); if (this.pendingSeek) this.initialSeek(); this.player.playVideo(); } }
+  pause() { this.running = false; clearTimeout(this.seekTimer); this.onAudible(false); if (this.ready) this.player.pauseVideo(); }
+  initialSeek(attempt = 0) {
+    clearTimeout(this.seekTimer);
+    if (!this.alive || !this.running || !this.pendingSeek) return;
+    if (!this.seek() && attempt < 100) this.seekTimer = setTimeout(() => this.initialSeek(attempt + 1), 200);
   }
-  destroy() { this.alive = false; this.running = false; this.onAudible(false); this.player?.destroy(); this.player = null; }
+  seek() {
+    if (!this.ready) return false;
+    const point = randomSeek(this.player.getDuration(), this.settings.refresh, this.previous);
+    if (point === null) { this.pendingSeek = true; return false; }
+    this.previous = point; this.pendingSeek = false; this.player.seekTo(point, true); return true;
+  }
+  destroy() { this.alive = false; this.running = false; clearTimeout(this.seekTimer); this.onAudible(false); this.player?.destroy(); this.player = null; }
 }

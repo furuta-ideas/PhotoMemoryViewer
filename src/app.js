@@ -1,7 +1,8 @@
-import { DEFAULTS, DRIVE_ALBUMS, DATE_MIN, DATE_MAX, DATE_DAYS, validDate, dateToDay, dayToDate, boundedDate, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261008-start9';
-import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261008-start9';
-import { VideoPlayer } from './youtube.js?v=20261008-start9';
-import { GOOGLE_CLIENT_ID } from './deployment-config.js?v=20261008-start9';
+import { DEFAULTS, DRIVE_ALBUMS, DATE_MIN, DATE_MAX, DATE_DAYS, validDate, dateToDay, dayToDate, boundedDate, validateSettings, inRange, gridShape, ShuffleBag, RefreshClock, driveFolderId, datedFolder, prefersFileSelection } from './core.js?v=20261008-media10';
+import { scanFiles, scanDirectory, storeHandle, restoreHandle, DriveSource, demoSource } from './sources.js?v=20261008-media10';
+import { VideoPlayer } from './youtube.js?v=20261008-media10';
+import { faceFilter } from './faces.js?v=20261008-media10';
+import { GOOGLE_CLIENT_ID } from './deployment-config.js?v=20261008-media10';
 
 const $ = id => document.getElementById(id);
 const STORAGE = 'photo-memory-viewer.settings.v1';
@@ -24,7 +25,8 @@ let video = null, videoAudible = false, currentVideo = null, failedVideos = new 
 let toastTimer, hideTimer, bgmURL, preparedClient = '', scanController = null;
 let videoRoom = null;
 let drivePreparing = false, loadedDriveAlbums = [], resumeRoots = [];
-let driveStreaming = false, driveAutoStartPending = false;
+let playbackWanted = true, playbackBlocked = false, rebuildTimer;
+let noFacePhotos = new Set(), confirmedFaces = new Set();
 const drive = new DriveSource();
 const clock = new RefreshClock(index => updateSlot(index));
 
@@ -43,12 +45,32 @@ function populate() {
   document.querySelectorAll('[data-drive-album]').forEach(input => { input.checked = settings.driveAlbums.includes(input.value); });
   chooseLayout(settings.layout); chooseTab(settings.sourceTab); $('bgm-fields').hidden = settings.bgm !== 'local';
 }
-function readSettings() {
-  return validateSettings({ ...settings, start: $('start-date').value.trim() || DATE_MIN, end: $('end-date').value.trim() || DATE_MAX, layout: draftLayout,
-    refresh: Number($('refresh').value), effect: $('effect').value, fit: $('fit').value,
-    youtube: $('youtube-enabled').checked, sound: $('youtube-sound').checked, volume: Number($('volume').value),
-    bgm: $('bgm-mode').value, bgmVolume: Number($('bgm-volume').value),
-    driveFolder: $('drive-folder').value.trim(), clientId: $('client-id').value.trim(), localFileFolder: $('file-folder-name').value.trim() });
+function applyLiveSettings(patch) {
+  try {
+    const next = validateSettings({ ...settings, ...patch });
+    const structural = ['start', 'end', 'layout', 'youtube'].some(key => next[key] !== settings[key]);
+    const timing = next.refresh !== settings.refresh;
+    settings = next; formError(); persist();
+    if (video) { video.settings = settings; video.applySound(); }
+    if (!settings.sound || !settings.volume) videoAudible = false;
+    syncBGM(); rhythmHint();
+    $('timing-label').textContent = `${settings.layout}画面 · ${settings.refresh}秒で一巡`;
+    for (const tile of tiles) {
+      tile.element.style.setProperty('--fit', settings.fit);
+      tile.element.classList.remove('smooth', 'fade', 'slide', 'none');
+      tile.element.classList.add(settings.effect);
+      if (settings.effect === 'none') tile.element.style.setProperty('--duration', '0s');
+    }
+    if (structural) {
+      // Coalesce slider input without blocking settings during a folder scan.
+      clearTimeout(rebuildTimer);
+      rebuildTimer = setTimeout(() => { void rebuild(); }, 80);
+    } else if (timing && playing) clock.start(settings.refresh, settings.layout);
+  } catch (error) { formError(error.message); }
+}
+function applyDates() {
+  syncDateSlider('start'); syncDateSlider('end');
+  applyLiveSettings({ start: $('start-date').value.trim() || DATE_MIN, end: $('end-date').value.trim() || DATE_MAX });
 }
 function displayDate(value) { return `${value.slice(0, 4)}年${Number(value.slice(4, 6))}月${Number(value.slice(6))}日`; }
 function syncDateSlider(bound) {
@@ -112,10 +134,10 @@ function hasVideoRoom() {
 }
 function setBusy(value) {
   busy = value;
-  for (const id of ['choose-folder', 'choose-files', 'find-drive-folder', 'connect-drive', 'reload-source', 'disconnect', 'demo', 'empty-choose', 'apply']) $(id).disabled = value || (['reload-source', 'disconnect'].includes(id) && !source);
+  for (const id of ['choose-folder', 'choose-files', 'find-drive-folder', 'connect-drive', 'reload-source', 'disconnect', 'demo', 'empty-choose']) $(id).disabled = value || (['reload-source', 'disconnect'].includes(id) && !source);
   document.querySelectorAll('[data-drive-album]').forEach(input => { input.disabled = value; });
   updateDriveButton();
-  $('play').disabled = (value && !driveStreaming) || !(photos.length || videos.length);
+  showPlayback();
 }
 function progress(count) { $('source-name').textContent = `読み込み中… ${count}件確認`; }
 function showReport(report) {
@@ -124,9 +146,10 @@ function showReport(report) {
   $('scan-errors').replaceChildren(...report.messages.map(message => { const li = document.createElement('li'); li.textContent = message; return li; }));
 }
 function sourceLabel() { $('source-name').textContent = source ? sourceName : 'フォルダ未選択'; $('source-dot').classList.toggle('active', !!source); }
-async function importSource(loader, kind, name, { progressive = false, autoStart = false } = {}) {
+async function importSource(loader, kind, name, { autoStart = true } = {}) {
   if (busy) return;
-  stop(); driveStreaming = progressive; driveAutoStartPending = autoStart; setBusy(true); formError();
+  stop(); faceFilter.clear(); noFacePhotos.clear(); confirmedFaces.clear(); faceStatus();
+  playbackWanted = autoStart; playbackBlocked = false; setBusy(true); formError();
   scanController = new AbortController();
   let published = false, previewReady = Promise.resolve();
   const adopt = result => {
@@ -141,7 +164,6 @@ async function importSource(loader, kind, name, { progressive = false, autoStart
     if (!published && !result.photos.some(item => inRange(item, settings.start, settings.end)) && !(settings.youtube && hasVideoRoom() && result.videos.some(item => inRange(item, settings.start, settings.end)))) return;
     if (!published) {
       published = true; adopt(result); previewReady = rebuild();
-      if (driveAutoStartPending) start();
     } else appendDriveMedia();
   };
   try {
@@ -151,7 +173,7 @@ async function importSource(loader, kind, name, { progressive = false, autoStart
     if (kind !== 'drive') drive.disconnect();
     if (kind !== 'local') { directory = null; importedFiles = null; importedFileFolder = null; await storeHandle(null); }
     showReport(result.report); sourceLabel();
-    if (!published) { await rebuild(); if (driveAutoStartPending) start(); }
+    if (!published) await rebuild();
     else { appendDriveMedia(); await previewReady; }
     toast(`${sourceName}\n写真${result.photos.length}枚・動画${result.videos.length}件を読み込みました。`);
     return result;
@@ -160,7 +182,7 @@ async function importSource(loader, kind, name, { progressive = false, autoStart
     sourceLabel(); toast(error.message || '写真の読み込みに失敗しました。');
     if (kind === 'drive') driveStatus(error.message || '写真の読み込みに失敗しました。', true);
     return null;
-  } finally { scanController = null; driveStreaming = false; driveAutoStartPending = false; setBusy(false); }
+  } finally { scanController = null; setBusy(false); }
 }
 async function pickFolder() {
   if (busy) return;
@@ -201,15 +223,16 @@ function updateFolderCaption() {
   $('folder-caption').textContent = shared ? items[0].folder : '';
   $('folder-caption').hidden = !shared;
 }
-function exclusions(tile) { return new Set([...tiles.filter(t => t !== tile).flatMap(t => [t.item?.id, t.pending?.id]), tile.item?.id, ...badPhotos].filter(Boolean)); }
+function faceStatus(message) { $('face-status').textContent = message || `顔が写った写真だけを表示 · 顔あり${confirmedFaces.size}枚／確認済み${confirmedFaces.size + noFacePhotos.size}枚（端末内で判定）`; }
+function exclusions(tile) { return new Set([...tiles.filter(t => t !== tile).flatMap(t => [t.item?.id, t.pending?.id]), tile.item?.id, ...badPhotos, ...noFacePhotos].filter(Boolean)); }
 async function replacePhoto(tile, generation = epoch) {
   if (tile.busy) return;
   tile.busy = true; tile.controller = new AbortController(); const revision = ++tile.revision;
   let loadedURL;
   try {
-    for (let attempt = 0; attempt < Math.min(photos.length, 12); attempt++) {
+    for (let attempt = 0; attempt < photos.length; attempt++) {
       if (generation !== epoch || revision !== tile.revision) return;
-      const candidates = photos.filter(item => !badPhotos.has(item.id));
+      const candidates = photos.filter(item => !badPhotos.has(item.id) && !noFacePhotos.has(item.id));
       if (!candidates.length) break;
       const excluded = exclusions(tile);
       let item = bag.draw(excluded);
@@ -230,6 +253,16 @@ async function replacePhoto(tile, generation = epoch) {
         try { await Promise.race([image.decode(), new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('画像の読み込みがタイムアウトしました。')), 20000); })]); }
         finally { clearTimeout(timeout); }
         if (generation !== epoch || revision !== tile.revision) { URL.revokeObjectURL(loadedURL); loadedURL = null; return; }
+        const hasFace = await faceFilter.check(image, item.id, tile.controller.signal);
+        if (generation !== epoch || revision !== tile.revision) { URL.revokeObjectURL(loadedURL); loadedURL = null; return; }
+        if (!hasFace) {
+          noFacePhotos.add(item.id); faceStatus();
+          URL.revokeObjectURL(loadedURL); loadedURL = null; tile.pending = null;
+          continue;
+        }
+        const newlyConfirmed = !confirmedFaces.has(item.id);
+        confirmedFaces.add(item.id); faceStatus();
+        if (newlyConfirmed && sourceKind === 'drive' && settings.driveAutoResume && confirmedFaces.size <= 16) { rememberDrive(loadedDriveAlbums); persist(); }
         tile.urls.add(loadedURL);
         const old = tile.element.querySelector('img');
         const duration = !old || settings.effect === 'none' || matchMedia('(prefers-reduced-motion:reduce)').matches ? 0 : Math.min(.6, settings.refresh / settings.layout / 2);
@@ -247,12 +280,13 @@ async function replacePhoto(tile, generation = epoch) {
       } catch (error) {
         if (loadedURL) { URL.revokeObjectURL(loadedURL); loadedURL = null; }
         if (generation !== epoch || revision !== tile.revision || error.name === 'AbortError') return;
-        if (['AUTH', 'NETWORK', 'SOURCE'].includes(error.code)) { stop(); if (sourceKind === 'drive' && error.code === 'AUTH') offerDriveResume(rememberedDriveRoots(), error.message); toast(error.message, 12000); return; }
+        if (error.code === 'FACE') { playbackBlocked = true; stop(); faceStatus(error.message); toast(error.message, 12000); return; }
+        if (['AUTH', 'NETWORK', 'SOURCE'].includes(error.code)) { playbackBlocked = true; stop(); if (sourceKind === 'drive' && error.code === 'AUTH') offerDriveResume(rememberedDriveRoots(), error.message); toast(error.message, 12000); return; }
         badPhotos.add(item.id);
         if (badPhotos.size === 1) toast('読み込めない写真をスキップしました。設定の再読み込みで再試行できます。');
       }
     }
-    if (!tile.item) { const label = document.createElement('div'); label.className = 'tile-error'; label.textContent = '表示できる写真がありません'; tile.element.append(label); }
+    if (!tile.item) { const label = document.createElement('div'); label.className = 'tile-error'; label.textContent = 'この期間に顔が確認できる写真がありません'; tile.element.querySelector('.tile-error')?.remove(); tile.element.append(label); }
   } finally {
     if (revision === tile.revision) { tile.busy = false; tile.pending = null; }
   }
@@ -271,7 +305,7 @@ async function mountVideo(tile, generation, item) {
     onAudible: audible => { if (generation === epoch) { videoAudible = audible; syncBGM(); } }
   });
   video = player;
-  resume.addEventListener('click', () => { start(); player.play(); resume.hidden = true; });
+  resume.addEventListener('click', () => { playbackWanted = true; start(); player.play(); resume.hidden = true; });
   player.running = playing;
   try { await player.mount(host, item, settings); }
   catch (error) { if (generation === epoch && video === player) { failedVideos.add(item.id); toast(error.message); changeVideo(true); } }
@@ -291,6 +325,7 @@ async function changeVideo(failure = false) {
   }
 }
 async function rebuild() {
+  clearTimeout(rebuildTimer);
   clock.stop(); destroyTiles(); failedVideos = new Set(); badPhotos = new Set();
   const generation = epoch;
   photos = (source?.photos || []).filter(item => inRange(item, settings.start, settings.end));
@@ -301,13 +336,12 @@ async function rebuild() {
   bag = new ShuffleBag(photos);
   const hasMedia = !!(photos.length || videos.length);
   $('empty-state').hidden = hasMedia;
-  $('empty-message').textContent = source ? 'この期間に表示できる写真・動画がありません。\n期間やフォルダを変更してください。' : '写真フォルダを選んで、Playを押すだけ。\nあの日の景色が、ゆっくり巡ります。';
+  $('empty-message').textContent = source ? 'この期間に表示できる写真・動画がありません。\n期間やフォルダを変更してください。' : '写真フォルダを選ぶと、自動で再生します。\nあの日の景色が、ゆっくり巡ります。';
   if (!hasMedia && eligibleVideos.length && !videoRoom) $('empty-message').textContent = '動画を表示する領域が小さすぎます。\n分割数を減らすか、設定ペインを閉じてください。';
   $('viewer-title').textContent = source ? sourceName : 'あなたの思い出を、ここに。';
   $('viewer-count').textContent = source ? `${photos.length} PHOTOS / ${videos.length} VIDEOS` : 'READY WHEN YOU ARE';
   $('timing-label').textContent = `${settings.layout}画面 · ${settings.refresh}秒で一巡`;
   $('next-video').hidden = !videos.length;
-  $('play').disabled = !hasMedia || (busy && !driveStreaming);
   if (!hasMedia) { stop(); return; }
   const firstVideo = videos.length ? videos[Math.floor(Math.random() * videos.length)] : null;
   const jobs = [];
@@ -318,7 +352,7 @@ async function rebuild() {
     else if (photos.length) jobs.push(replacePhoto(tile, generation));
     else { const label = document.createElement('div'); label.className = 'tile-error'; label.textContent = '写真はありません'; tile.element.append(label); }
   }
-  resizeGrid(); syncBGM();
+  resizeGrid(); start(); syncBGM(); showPlayback();
   // Loading an external video API must not delay the photo slideshow.
   if (playing) clock.start(settings.refresh, settings.layout);
   await Promise.allSettled(jobs);
@@ -331,9 +365,8 @@ function appendDriveMedia() {
   $('viewer-title').textContent = sourceName;
   $('viewer-count').textContent = `${photos.length} PHOTOS / ${videos.length} VIDEOS`;
   $('next-video').hidden = !videos.length;
-  $('play').disabled = !(photos.length || videos.length);
   if (!photos.length && !videos.length) { void rebuild(); return; }
-  if (!tiles.length) return;
+  if (!tiles.length) { void rebuild(); return; }
   if (videos.length && !tiles.some(tile => tile.isVideo)) {
     const tile = tiles.at(-1);
     tile.revision++; tile.controller?.abort(); tile.busy = false; tile.pending = null;
@@ -343,7 +376,7 @@ function appendDriveMedia() {
     void mountVideo(tile, epoch, videos[0]);
   }
   for (const tile of tiles) if (!tile.isVideo && !tile.item && !tile.busy && photos.length) void replacePhoto(tile);
-  if (driveAutoStartPending && (photos.length || videos.length)) start();
+  start();
 }
 function updateSlot(index) {
   if (!playing || document.hidden) return;
@@ -352,59 +385,60 @@ function updateSlot(index) {
 }
 function showPlayback() {
   $('play-state').textContent = playing ? '再生中' : '停止中'; $('play-dot').classList.toggle('active', playing);
-  $('play').setAttribute('aria-pressed', String(playing));
-  $('play').title = playing ? '再生中' : '再生';
+  $('stop').disabled = !(photos.length || videos.length);
+  $('stop').setAttribute('aria-label', playing ? '停止' : '再開');
+  $('stop').title = playing ? '停止' : '再開';
+  $('stop').querySelector('use').setAttribute('href', playing ? '#i-stop' : '#i-resume');
 }
 function start() {
-  if ((busy && !driveStreaming) || !(photos.length || videos.length)) return;
-  driveAutoStartPending = false;
+  if (!playbackWanted || playbackBlocked || !(photos.length || videos.length)) return;
   const wasPlaying = playing; playing = true;
   if (!wasPlaying) clock.start(settings.refresh, settings.layout);
   video?.play(); syncBGM(); showPlayback(); autoHide();
 }
 function stop() {
-  driveAutoStartPending = false;
   playing = false; clock.stop(); video?.pause(); $('bgm').pause(); videoAudible = false;
   for (const tile of tiles) { if (tile.busy) { tile.revision++; tile.controller?.abort(); tile.busy = false; tile.pending = null; } }
   clearTimeout(hideTimer); document.body.classList.remove('toolbar-hidden'); showPlayback();
+}
+function togglePlayback() {
+  if (playing) { playbackWanted = false; stop(); }
+  else {
+    playbackWanted = true; playbackBlocked = false; start();
+    for (const tile of tiles) if (!tile.isVideo && !tile.item && photos.length) void replacePhoto(tile);
+  }
 }
 function syncBGM() {
   const audio = $('bgm'); audio.volume = settings.bgmVolume / 100;
   const videoSoundEnabled = !!video && settings.sound && settings.volume > 0;
   if (playing && !document.hidden && settings.bgm === 'local' && bgmURL && !videoAudible && !videoSoundEnabled) {
-    if (audio.paused) audio.play().catch(() => toast('BGMの再生がブロックされました。Playを押して再試行してください。'));
+    if (audio.paused) audio.play().catch(() => toast('BGMの再生がブロックされました。停止／再開ボタンで再試行してください。'));
   } else audio.pause();
 }
 
-$('settings-form').addEventListener('submit', async event => {
-  event.preventDefault(); if (busy) return;
-  try {
-    const next = readSettings(); formError(); settings = next;
-    if (sourceKind === 'drive' && settings.driveAutoResume) rememberDrive(loadedDriveAlbums);
-    persist();
-    $('start-date').value = settings.start; $('end-date').value = settings.end;
-    syncDateSlider('start'); syncDateSlider('end');
-    if (settings.bgm === 'local' && !bgmURL) toast('BGM用の音楽ファイルを選択してください。');
-    await rebuild(); toast('設定を適用しました。');
-  } catch (error) { formError(error.message); }
-});
-document.querySelectorAll('[data-layout]').forEach(button => button.addEventListener('click', () => chooseLayout(Number(button.dataset.layout))));
-document.querySelectorAll('[data-source]').forEach(button => button.addEventListener('click', () => chooseTab(button.dataset.source)));
-$('refresh').addEventListener('input', rhythmHint);
+$('settings-form').addEventListener('submit', event => event.preventDefault());
+document.querySelectorAll('[data-layout]').forEach(button => button.addEventListener('click', () => { chooseLayout(Number(button.dataset.layout)); applyLiveSettings({layout:draftLayout}); }));
+document.querySelectorAll('[data-source]').forEach(button => button.addEventListener('click', () => { chooseTab(button.dataset.source); persist(); }));
+$('refresh').addEventListener('input', () => applyLiveSettings({refresh:Number($('refresh').value)}));
+for (const id of ['effect', 'fit']) $(id).addEventListener('change', () => applyLiveSettings({[id]:$(id).value}));
+for (const [id,key] of [['youtube-enabled','youtube'],['youtube-sound','sound']]) $(id).addEventListener('change', () => applyLiveSettings({[key]:$(id).checked}));
 for (const bound of ['start', 'end']) {
-  $(`${bound}-range`).addEventListener('input', () => moveDateSlider(bound));
-  $(`${bound}-date`).addEventListener('input', () => syncDateSlider(bound));
+  $(`${bound}-range`).addEventListener('input', () => { moveDateSlider(bound); applyDates(); });
+  $(`${bound}-date`).addEventListener('input', applyDates);
 }
 $('all-dates').addEventListener('click', () => {
   $('start-date').value = DATE_MIN; $('end-date').value = DATE_MAX;
-  syncDateSlider('start'); syncDateSlider('end'); formError();
+  applyDates();
 });
-$('volume').addEventListener('input', () => { $('volume-output').value = `${$('volume').value}%`; });
-$('bgm-mode').addEventListener('change', () => { $('bgm-fields').hidden = $('bgm-mode').value !== 'local'; });
+$('volume').addEventListener('input', () => { $('volume-output').value = `${$('volume').value}%`; applyLiveSettings({volume:Number($('volume').value)}); });
+$('bgm-volume').addEventListener('input', () => applyLiveSettings({bgmVolume:Number($('bgm-volume').value)}));
+$('bgm-mode').addEventListener('change', () => { $('bgm-fields').hidden = $('bgm-mode').value !== 'local'; applyLiveSettings({bgm:$('bgm-mode').value}); });
+$('file-folder-name').addEventListener('change', () => applyLiveSettings({localFileFolder:$('file-folder-name').value.trim()}));
 $('bgm-file').addEventListener('change', () => {
   const file = $('bgm-file').files[0]; if (!file) return;
   $('bgm').pause(); if (bgmURL) URL.revokeObjectURL(bgmURL);
   bgmURL = URL.createObjectURL(file); $('bgm').src = bgmURL; $('bgm-name').textContent = file.name;
+  syncBGM();
 });
 $('bgm').addEventListener('error', () => toast('音楽ファイルを再生できません。MP3またはAACをお試しください。'));
 $('choose-folder').addEventListener('click', pickFolder);
@@ -458,7 +492,8 @@ function driveReady() {
 function rememberDrive(roots) {
   if (!roots.length) return;
   settings.driveResolvedAlbums = roots.map(({id,name}) => ({id,name}));
-  const preview = (source?.photos || []).filter(item => inRange(item, settings.start, settings.end)).slice(0,16).map(({id,name,folder,date}) => ({id,name,folder,date}));
+  const candidates = (source?.photos || []).filter(item => inRange(item, settings.start, settings.end) && !noFacePhotos.has(item.id));
+  const preview = [...candidates.filter(item => confirmedFaces.has(item.id)), ...candidates.filter(item => !confirmedFaces.has(item.id))].slice(0,16).map(({id,name,folder,date}) => ({id,name,folder,date}));
   settings.driveResume = {roots:settings.driveResolvedAlbums,clientId:$('client-id').value.trim(),preview};
   settings.lastSource = 'drive'; settings.driveAutoResume = true; resumeRoots = [];
   $('empty-choose').textContent = '写真フォルダを選ぶ →';
@@ -514,7 +549,7 @@ async function loadDriveAlbums(roots, { automatic = false } = {}) {
     merged.photos = discovered;
     merged.report.messages = merged.report.messages.slice(0, 50);
     return merged;
-  }, 'drive', roots.map(root => root.name).join(' / '), {progressive:true,autoStart:true});
+  }, 'drive', roots.map(root => root.name).join(' / '));
   if (result) {
     settings.clientId = $('client-id').value.trim(); persist();
     $('drive-folder-results').hidden = true;
@@ -624,7 +659,7 @@ $('disconnect').addEventListener('click', async () => {
   if (busy) return;
   setBusy(true);
   stop(); drive.disconnect(); preparedClient = ''; source = null; sourceKind = ''; directory = null; importedFiles = null; sourceName = '';
-  importedFileFolder = null; pendingFileFolder = null;
+  importedFileFolder = null; pendingFileFolder = null; faceFilter.clear(); noFacePhotos.clear(); confirmedFaces.clear(); faceStatus();
   loadedDriveAlbums = [];
   resumeRoots = []; delete settings.driveResume; delete settings.driveResolvedAlbums; settings.driveFolder = ''; settings.lastSource = ''; settings.driveAutoResume = false; persist();
   $('drive-folder').value = ''; $('empty-choose').textContent = '写真フォルダを選ぶ →';
@@ -632,7 +667,7 @@ $('disconnect').addEventListener('click', async () => {
   await storeHandle(null); sourceLabel(); showReport({ skipped: 0, messages: [] }); await rebuild(); setBusy(false); toast('接続を解除しました。');
 });
 $('demo').addEventListener('click', () => importSource(async () => demoSource(), 'demo', 'サンプル'));
-$('play').addEventListener('click', start); $('stop').addEventListener('click', stop);
+$('stop').addEventListener('click', togglePlayback);
 $('next-video').addEventListener('click', () => changeVideo());
 $('settings-toggle').addEventListener('click', () => setPane($('settings').hidden));
 $('settings-close').addEventListener('click', () => setPane(false)); $('scrim').addEventListener('click', () => setPane(false));
@@ -649,13 +684,13 @@ $('toolbar').addEventListener('focusout', () => setTimeout(autoHide, 0));
 document.addEventListener('keydown', event => {
   clearTimeout(hideTimer); document.body.classList.remove('toolbar-hidden');
   if (event.key === 'Escape' && !$('settings').hidden) setPane(false);
-  if (event.code === 'Space' && !['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON', 'SUMMARY'].includes(event.target.tagName)) { event.preventDefault(); playing ? stop() : start(); }
+  if (event.code === 'Space' && !['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON', 'SUMMARY'].includes(event.target.tagName)) { event.preventDefault(); togglePlayback(); }
 });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { clock.stop(); video?.pause(); $('bgm').pause(); }
   else if (playing) { clock.start(settings.refresh, settings.layout); video?.play(); syncBGM(); }
 });
-window.addEventListener('pagehide', () => { stop(); scanController?.abort(); });
+window.addEventListener('pagehide', () => { clearTimeout(rebuildTimer); stop(); scanController?.abort(); });
 new ResizeObserver(resizeGrid).observe($('viewer'));
 populate(); persist(); showPlayback(); resizeGrid();
 if (preferFiles) {
@@ -663,6 +698,7 @@ if (preferFiles) {
   $('local-picker-hint').textContent = 'iPad・iPhoneではGoogle Driveを選び、登録済みのアルバムにチェックを入れて接続してください。下の写真選択は1フォルダだけの補助機能です。';
 }
 updateDriveButton();
+if (settings.lastSource === 'demo') void importSource(async () => demoSource(), 'demo', 'サンプル');
 if (settings.clientId) {
   const roots = rememberedDriveRoots();
   const authorized = drive.restoreSession(settings.clientId);
@@ -673,9 +709,16 @@ if (settings.clientId) {
   prepareDrive().catch(error => driveStatus(error.message, true));
 }
 else driveStatus('Google接続は管理者の初期設定待ちです。2つのアルバムは登録済みです。接続設定が完了すると、このボタンから利用できます。', true);
-restoreHandle().then(handle => {
+restoreHandle().then(async handle => {
   if (!source && !busy && handle) {
     directory = handle;
+    if (settings.lastSource === 'local') {
+      try {
+        if (await handle.queryPermission({ mode: 'read' }) === 'granted' && !source && !busy) {
+          setPane(false); await importSource(() => scanDirectory(handle, progress), 'local', handle.name); return;
+        }
+      } catch { /* A reconnect button remains available when permission cannot be queried. */ }
+    }
     const restore = document.createElement('button'); restore.id = 'restore-folder'; restore.type = 'button'; restore.className = 'folder-button'; restore.style.marginTop = '8px'; restore.textContent = `${handle.name} を再接続`;
     restore.addEventListener('click', async () => {
       if (busy) return;
@@ -684,4 +727,4 @@ restoreHandle().then(handle => {
     });
     $('local-fields').append(restore);
   }
-});
+}).catch(() => {});
